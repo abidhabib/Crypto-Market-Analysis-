@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { getStream } from '@/lib/terminal/stream-client'
-import { symbolMeta, AMBER } from '@/lib/terminal/constants'
+import { useTerminal } from '@/lib/terminal/store'
+import { symbolMeta, GREEN, RED, AMBER } from '@/lib/terminal/constants'
 import { fmtPrice, fmtCompact, fmtTime, fmtUsd } from '@/lib/terminal/format'
 import { PanelHeader, SourceBadge, StatCard } from './panel-kit'
 import { cn } from '@/lib/utils'

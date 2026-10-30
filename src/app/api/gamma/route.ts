@@ -28,7 +28,7 @@ function parseInstrument(name: string) {
   if (!m) return null
   const months: Record<string, number> = { JAN: 0, FEB: 1, MAR: 2, APR: 3, MAY: 4, JUN: 5, JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11 }
   const year = 2000 + parseInt(m[4], 10)
-  const expiry = Date.UTC(year, months[m[3]], parseInt(m[1], 10), 8, 0, 0) // 08:00 UTC settlement
+  const expiry = Date.UTC(year, months[m[3]], parseInt(m[2], 10), 8, 0, 0) // 08:00 UTC settlement
   return { currency: m[1], expiry, strike: parseInt(m[5], 10), type: m[6] as 'C' | 'P' }
 }
 
@@ -77,7 +77,7 @@ export async function GET(req: NextRequest) {
       const T = Math.max((expiry - now) / (365 * 86400000), 1 / (365 * 24))
       const legs = rows
         .map((r) => ({ r, p: parseInstrument(r.instrument_name) }))
-        .filter(({ p }) => p && p.expiry === expiry && r.open_interest > 0 && r.mark_iv)
+        .filter(({ p, r }) => p && p.expiry === expiry && r.open_interest > 0 && r.mark_iv)
         .map(({ r, p }) => ({
           strike: p!.strike,
           type: p!.type,

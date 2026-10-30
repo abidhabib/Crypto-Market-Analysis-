@@ -21,13 +21,15 @@ export default function TapePanel() {
 
   const data = usePoll(() => {
     const s = getStream()
-    const t = Date.now()
-    const recent = s.trades.filter((x) => x.t >= t - 10_000)
+    const all = s.trades
+    // anchor the rate window to the newest print (immune to client/server clock skew)
+    const tNew = all.length ? all[all.length - 1].t : Date.now()
+    const recent = all.filter((x) => x.t >= tNew - 10_000)
     const rate = recent.length / 10
     const notional = recent.reduce((a, x) => a + x.p * x.q, 0) / 10
     const buys = recent.filter((x) => !x.m).reduce((a, x) => a + x.p * x.q, 0)
     const sell = recent.reduce((a, x) => a + x.p * x.q, 0) - buys
-    return { trades: s.trades, rate, notional, buyPct: buys + sell > 0 ? (buys / (buys + sell)) * 100 : 50 }
+    return { trades: all, rate, notional, buyPct: buys + sell > 0 ? (buys / (buys + sell)) * 100 : 50 }
   }, 400)
 
   const rows = useMemo(() => {

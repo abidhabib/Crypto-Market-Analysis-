@@ -52,13 +52,14 @@ interface SymbolState {
   oi?: { oi: number; t: number }
   liqs: Liq[]
   timers: ReturnType<typeof setInterval>[]
+  lastSentTradeId: number
 }
 
 const S = new Map<string, SymbolState>()
 const state = (symbol: string): SymbolState => {
   let s = S.get(symbol)
   if (!s) {
-    s = { symbol, streams: 0, status: 'connecting', trades: [], klines: [], heatCols: [], liqs: [], timers: [] }
+    s = { symbol, streams: 0, status: 'connecting', trades: [], klines: [], heatCols: [], liqs: [], timers: [], lastSentTradeId: 0 }
     S.set(symbol, s)
   }
   return s
@@ -187,7 +188,19 @@ async function loadHistory(s: SymbolState) {
     jget(`https://api.binance.com/api/v3/aggTrades?symbol=${s.symbol}&limit=1000`).catch(() => []),
   ])
   s.klines = k.map((x: any[]) => ({ t: x[0], o: +x[1], h: +x[2], l: +x[3], c: +x[4], v: +x[5] }))
-  s.trades = (Array.isArray(tr) ? tr : []).map((x: any[]) => ({ a: x[0] ?? x.a, p: +(x[1] ?? x.p), q: +(x[2] ?? x.q), t: +(x[4] ?? x.t), m: !!(x[5] ?? x.m) }))
+  // REST aggTrades returns objects: { a, p, q, f, l, T, m, M }
+  s.trades = (Array.isArray(tr) ? tr : []).map((x: any) => ({ a: +x.a, p: +x.p, q: +x.q, t: +x.T, m: !!x.m }))
+  s.trades.sort((a, b) => a.t - b.t)
+  s.lastSentTradeId = s.trades.length ? s.trades[s.trades.length - 1].a : 0
+}
+
+async function pollMark(s: SymbolState) {
+  // futures WS streams for markPrice are geo-restricted on some hosts, so poll REST
+  try {
+    const d = await jget(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${s.symbol}`)
+    s.mark = { p: +d.markPrice, funding: +d.lastFundingRate, nextFunding: +d.nextFundingTime, index: +d.indexPrice }
+    io.emit('mark', { symbol: s.symbol, mark: s.mark })
+  } catch { /* transient */ }
 }
 
 async function ensureSymbol(symbol: string) {
@@ -199,9 +212,10 @@ async function ensureSymbol(symbol: string) {
   openFutWs(s)
   // prime history before first snapshot
   try { await loadHistory(s) } catch { s.lastError = 'history load failed' }
-  pollLadder(s); pollOi(s)
+  pollLadder(s); pollOi(s); pollMark(s)
   s.timers.push(setInterval(() => pollLadder(s), 1000))
   s.timers.push(setInterval(() => pollOi(s), 10000))
+  s.timers.push(setInterval(() => pollMark(s), 5000))
 }
 
 function releaseSymbol(symbol: string) {
@@ -267,6 +281,16 @@ setInterval(() => {
     if (s.ticker) io.emit('ticker', { symbol: s.symbol, ticker: s.ticker })
     if (s.mark) io.emit('mark', { symbol: s.symbol, mark: s.mark })
     if (s.depth) io.emit('depth', { symbol: s.symbol, depth: s.depth })
+    // relay fresh aggTrades in one batch
+    if (s.trades.length) {
+      let i = s.trades.length - 1
+      while (i >= 0 && s.trades[i].a > s.lastSentTradeId) i--
+      const fresh = s.trades.slice(i + 1)
+      if (fresh.length) {
+        io.emit('trade', { symbol: s.symbol, trades: fresh })
+        s.lastSentTradeId = fresh[fresh.length - 1].a
+      }
+    }
   }
 }, 250)
 

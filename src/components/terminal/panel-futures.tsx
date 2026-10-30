@@ -224,7 +224,9 @@ export default function FuturesPanel() {
                   </tr>
                 ))}
                 {liqs.length === 0 && (
-                  <tr><td colSpan={5} className="px-3 py-5 text-center text-muted-foreground">No liquidations on {symbol} since the stream connected — quiet market.</td></tr>
+                  <tr><td colSpan={5} className="px-3 py-5 text-center text-muted-foreground">
+                    No liquidation prints received on {symbol} yet — either no liquidations occurred since the stream connected, or the exchange feed is unavailable from this network. Funding, OI and the map above keep updating regardless.
+                  </td></tr>
                 )}
               </tbody>
             </table>
