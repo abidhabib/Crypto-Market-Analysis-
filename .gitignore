@@ -32,6 +32,13 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
+
+# Local runtime data and captured tool output
+/db/*.db
+/db/*.db-*
+/.zscripts/*.pid
+/tool-results/
 
 # vercel
 .vercel

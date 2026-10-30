@@ -89,7 +89,11 @@ function applySnapshot(snap: Snapshot) {
 
 function ensureSocket(): Socket {
   if (socket) return socket
-  socket = io('/?XTransformPort=3031', {
+  const streamUrl = process.env.NEXT_PUBLIC_STREAM_URL || (typeof window !== 'undefined' &&
+    ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname)
+    ? `${window.location.protocol}//${window.location.hostname}:3031`
+    : '/?XTransformPort=3031')
+  socket = io(streamUrl, {
     path: '/',
     transports: ['websocket', 'polling'],
     reconnectionDelay: 800,

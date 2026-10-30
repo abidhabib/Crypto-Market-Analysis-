@@ -137,9 +137,20 @@ async function jget(url: string, timeoutMs = 8000): Promise<any> {
       restBanUntil.set(new URL(url).host, until)
       throw new RestBanError(until)
     }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (!res.ok) {
+      const body = await res.json().catch(() => null)
+      throw new BinanceApiError(res.status, body?.code)
+    }
     return await res.json()
   } finally { clearTimeout(timer) }
+}
+
+class BinanceApiError extends Error {
+  code?: number
+  constructor(status: number, code?: number) {
+    super(`HTTP ${status}`)
+    this.code = code
+  }
 }
 
 class RestBanError extends Error {
@@ -477,10 +488,10 @@ async function validateSymbol(symbol: string): Promise<boolean | 'unknown'> {
     await jget(`https://api.binance.com/api/v3/exchangeInfo?symbol=${symbol}`, 8000)
     return true
   } catch (e) {
-    // REST banned / rate-limited: can't verify — assume valid and let the WS
-    // prove the symbol (Binance closes the stream for unknown symbols)
-    if (e instanceof RestBanError) return 'unknown'
-    return false
+    // Only Binance's explicit invalid-symbol response proves a symbol invalid.
+    // Timeouts, network errors and rate limits must not disable its streams.
+    if (e instanceof BinanceApiError && e.code === -1121) return false
+    return 'unknown'
   }
 }
 
