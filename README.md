@@ -51,3 +51,5 @@ pnpm lint
 The heatmap calculation tests cover historical inspection, liquidity binning, aggressor flow, trade clustering, bubble area scaling, persistence/replenishment, reactions, data quality and replay without future-data leakage. Existing project-wide TypeScript errors remain in other panels, and `next.config.ts` currently permits builds with type errors.
 
 Market context and displayed analytics are descriptive; they are not validated profitability predictions.
+
+Heatmap navigation: scroll to zoom the time axis, pinch on a trackpad (or Ctrl + wheel) to zoom both axes, Shift + scroll to zoom price, drag to pan, and swipe horizontally to pan time. Zoom stays anchored to the cursor within the recorded history. Navigation holds a snapshot; **Return to live** resumes the feed. Use the chart’s +/− buttons or keyboard +/−, and double-click, press 0/Escape, or use Reset to restore the chart. **Insights** toggles the analysis sidebar. Touch supports drag and two-finger pinch inside the chart.

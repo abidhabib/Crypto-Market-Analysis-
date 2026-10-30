@@ -5,6 +5,7 @@ export const BID_COLOR = '#38bdf8'
 export const ASK_COLOR = '#f5b94c'
 export interface HeatmapView {
   width: number; height: number; end: number; span: number; mid: number
+  priceCenter?: number
   range: number; step: number; contrast: number; minTrade: number
   bubbleScale: number
   bubbles?: ReturnType<typeof getTradeBubbles>
@@ -19,7 +20,8 @@ export function heatmapGeometry(v: HeatmapView) {
   const left = 12, top = 22, bottom = Math.max(top + 1, v.height - 32)
   const profile = v.showProfile && v.width >= 560 ? 62 : 0
   const right = Math.max(left + 1, v.width - 86 - profile)
-  const high = v.mid * (1 + v.range / 100), low = v.mid * (1 - v.range / 100)
+  const center = v.priceCenter ?? v.mid
+  const high = center + v.mid * v.range / 100, low = center - v.mid * v.range / 100
   const start = v.end - v.span
   return { left, top, bottom, right, profile, high, low, start,
     x: (t: number) => left + (t - start) / v.span * (right - left),
@@ -27,9 +29,15 @@ export function heatmapGeometry(v: HeatmapView) {
   }
 }
 
-const ramp = (r: number, g: number, b: number) => Array.from({ length: 64 }, (_, i) =>
-  `rgba(${r},${g},${b},${0.02 + Math.pow(i / 63, 1.15) * 0.43})`)
-const bids = ramp(56, 189, 248), asks = ramp(245, 185, 76)
+// More size brings both lightness and color contrast, not only opacity.
+const ramp = (side: 'bid' | 'ask') => Array.from({ length: 64 }, (_, i) => {
+  const t = i / 63
+  const stops = side === 'bid' ? [[8, 19, 40], [16, 68, 135], [22, 163, 211], [255, 249, 214]] : [[16, 20, 43], [53, 59, 121], [181, 134, 52], [255, 249, 214]]
+  const scaled = t * 3, n = Math.min(2, Math.floor(scaled)), f = scaled - n
+  const c = stops[n].map((v, k) => Math.round(v + (stops[n + 1][k] - v) * f))
+  return `rgba(${c.join(',')},${0.25 + t * 0.7})`
+})
+const bids = ramp('bid'), asks = ramp('ask')
 const usd = (v: number) => v >= 1e6 ? `$${(v / 1e6).toFixed(1)}m` : `$${(v / 1000).toFixed(0)}k`
 
 export function getTradeBubbles(v: HeatmapView) {
@@ -58,7 +66,7 @@ export function getReactionMarkers(v: HeatmapView) {
 export function drawHeatmap(ctx: CanvasRenderingContext2D, v: HeatmapView) {
   const { width: w, height: h } = v
   ctx.clearRect(0, 0, w, h)
-  ctx.fillStyle = '#090f18'; ctx.fillRect(0, 0, w, h)
+  ctx.fillStyle = '#070c13'; ctx.fillRect(0, 0, w, h)
   if (w < 130 || h < 90 || v.mid <= 0) return
   const g = heatmapGeometry(v), { left, top, bottom, right, profile, x, y, start, high, low } = g
   const visible = v.columns.filter(c => c.t >= start - 3000 && c.t <= v.end)
@@ -70,7 +78,7 @@ export function drawHeatmap(ctx: CanvasRenderingContext2D, v: HeatmapView) {
   // Timestamp-based sampling keeps a full rolling buffer scrolling correctly.
   // Each screen bucket uses its most recent observed snapshot, never a replay.
   const sampled = new Map<number, HeatCol>()
-  const columnWidth = Math.max(3, (right - left) / 260)
+  const columnWidth = Math.max(1, (right - left) / 700)
   for (const col of visible) sampled.set(Math.floor((x(col.t) - left) / columnWidth), col)
   const samples = [...sampled.values()]
   for (let i = 0; i < samples.length; i++) {
@@ -82,7 +90,7 @@ export function drawHeatmap(ctx: CanvasRenderingContext2D, v: HeatmapView) {
         if (price < low || price > high) continue
         const intensity = Math.min(63, Math.floor(Math.log1p(notional / ref * 3) / Math.log(4) * 50 * v.contrast))
         ctx.fillStyle = colors[intensity]
-        const cy = y(price + v.step / 2), ch = Math.max(1.5, y(price - v.step / 2) - cy - 0.6)
+        const cy = y(price + v.step / 2), ch = Math.max(1, y(price - v.step / 2) - cy - 0.25)
         ctx.fillRect(cx, cy, cw, ch)
       }
     }
@@ -120,12 +128,12 @@ export function drawHeatmap(ctx: CanvasRenderingContext2D, v: HeatmapView) {
     const bubbles = v.bubbles ?? getTradeBubbles(v)
     for (const tr of bubbles) {
       const fraction = tr.buy / tr.usd, angle = -Math.PI / 2 + Math.PI * 2 * fraction
-      ctx.shadowBlur = 7; ctx.shadowColor = tr.buy >= tr.sell ? '#22c55e55' : '#ef444455'
+      ctx.shadowBlur = 3; ctx.shadowColor = tr.buy >= tr.sell ? '#22c55e55' : '#ef444455'
       ctx.beginPath(); ctx.arc(tr.x, tr.y, tr.r + 1.5, 0, Math.PI * 2)
       ctx.fillStyle = '#07111c'; ctx.fill(); ctx.shadowBlur = 0
       for (const [from, to, fill, edge] of [
-        [-Math.PI / 2, angle, '#22c55eaa', '#4ade80'],
-        [angle, Math.PI * 1.5, '#ef4444aa', '#fb7185'],
+        [-Math.PI / 2, angle, '#16c784cc', '#55dfaa'],
+        [angle, Math.PI * 1.5, '#eb4d5ccc', '#ff8790'],
       ] as const) {
         if (to - from < 0.001) continue
         ctx.beginPath(); ctx.moveTo(tr.x, tr.y); ctx.arc(tr.x, tr.y, tr.r, from, to); ctx.closePath()
@@ -172,11 +180,6 @@ export function drawHeatmap(ctx: CanvasRenderingContext2D, v: HeatmapView) {
     ctx.font = 'bold 10px ui-monospace, monospace'; ctx.textAlign = 'center'; ctx.fillStyle = color
     ctx.fillText(reactionCodes[e.kind], e.x, e.y + 3.5)
   }
-  if (v.pointer && v.pointer.x >= left && v.pointer.x <= right && v.pointer.y >= top && v.pointer.y <= bottom) {
-    ctx.strokeStyle = '#dbeafe70'; ctx.setLineDash([3, 4])
-    ctx.beginPath(); ctx.moveTo(v.pointer.x, top); ctx.lineTo(v.pointer.x, bottom)
-    ctx.moveTo(left, v.pointer.y); ctx.lineTo(right, v.pointer.y); ctx.stroke(); ctx.setLineDash([])
-  }
   ctx.restore()
 
   ctx.font = '10px ui-monospace, monospace'; ctx.textAlign = 'left'
@@ -206,7 +209,27 @@ export function drawHeatmap(ctx: CanvasRenderingContext2D, v: HeatmapView) {
       ctx.fillRect(bx + 3, y(p + v.step / 2), n / max * (profile - 7), Math.max(2, y(p - v.step / 2) - y(p + v.step / 2) - 1))
     }
     ctx.globalAlpha = 1; ctx.fillStyle = '#8494ab'; ctx.textAlign = 'left'
-    ctx.fillText('NOW', bx + 4, 13)
+    ctx.fillText('DEPTH', bx + 4, 13)
     ctx.fillText(usd(max), bx + 3, h - 12)
   }
+}
+
+/** Cheap cursor overlay: called without rebuilding the liquidity raster. */
+export function drawHeatmapCursor(ctx: CanvasRenderingContext2D, v: HeatmapView) {
+  const p = v.pointer, g = heatmapGeometry(v)
+  if (!p || v.mid <= 0 || p.x < g.left || p.x > g.right || p.y < g.top || p.y > g.bottom) return
+  ctx.save()
+  ctx.lineWidth = 1; ctx.strokeStyle = '#cbd5e17a'; ctx.setLineDash([3, 4])
+  ctx.beginPath(); ctx.moveTo(p.x, g.top); ctx.lineTo(p.x, g.bottom)
+  ctx.moveTo(g.left, p.y); ctx.lineTo(g.right, p.y); ctx.stroke(); ctx.setLineDash([])
+  const price = g.high - (p.y - g.top) / (g.bottom - g.top) * (g.high - g.low)
+  const t = g.start + (p.x - g.left) / (g.right - g.left) * v.span
+  ctx.font = '10px ui-monospace, monospace'
+  ctx.fillStyle = '#cbd5e1'; ctx.fillRect(g.right + 4, p.y - 9, 78, 18)
+  ctx.fillStyle = '#0b1220'; ctx.textAlign = 'left'; ctx.fillText(v.formatPrice(price), g.right + 10, p.y + 3)
+  const tx = Math.max(g.left + 31, Math.min(g.right - 31, p.x))
+  ctx.fillStyle = '#cbd5e1'; ctx.fillRect(tx - 31, v.height - 25, 62, 18)
+  ctx.fillStyle = '#0b1220'; ctx.textAlign = 'center'
+  ctx.fillText(new Date(t).toISOString().slice(11, 19), tx, v.height - 12)
+  ctx.restore()
 }
