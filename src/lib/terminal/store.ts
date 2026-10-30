@@ -8,10 +8,12 @@ interface TerminalStore {
   tab: TabId
   timeframe: TimeframeId
   railOpen: boolean
+  scannerOpen: boolean
   setSymbol: (s: string) => void
   setTab: (t: TabId) => void
   setTimeframe: (t: TimeframeId) => void
   toggleRail: () => void
+  setScannerOpen: (open: boolean) => void
 }
 
 export const useTerminal = create<TerminalStore>((set) => ({
@@ -19,8 +21,10 @@ export const useTerminal = create<TerminalStore>((set) => ({
   tab: 'chart',
   timeframe: '1m',
   railOpen: true,
+  scannerOpen: false,
   setSymbol: (symbol) => set({ symbol }),
   setTab: (tab) => set({ tab }),
   setTimeframe: (timeframe) => set({ timeframe }),
   toggleRail: () => set((s) => ({ railOpen: !s.railOpen })),
+  setScannerOpen: (scannerOpen) => set({ scannerOpen }),
 }))

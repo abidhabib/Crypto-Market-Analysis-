@@ -20,7 +20,10 @@ const TapePanel = dynamic(() => import('./panel-tape'), { ssr: false })
 const L3Panel = dynamic(() => import('./panel-l3'), { ssr: false })
 const FuturesPanel = dynamic(() => import('./panel-futures'), { ssr: false })
 const SentimentPanel = dynamic(() => import('./panel-sentiment'), { ssr: false })
+const SignalsPanel = dynamic(() => import('./panel-signals'), { ssr: false })
+const InsightsPanel = dynamic(() => import('./panel-insights'), { ssr: false })
 const GuidePanel = dynamic(() => import('./panel-guide'), { ssr: false })
+const MarketPicker = dynamic(() => import('./market-picker'), { ssr: false })
 
 function ActivePanel({ tab }: { tab: TabId }) {
   switch (tab) {
@@ -34,12 +37,14 @@ function ActivePanel({ tab }: { tab: TabId }) {
     case 'l3': return <L3Panel />
     case 'futures': return <FuturesPanel />
     case 'sentiment': return <SentimentPanel />
+    case 'signals': return <SignalsPanel />
+    case 'insights': return <InsightsPanel />
     case 'guide': return <GuidePanel />
     default: return null
   }
 }
 
-const RAIL_TABS = new Set<TabId>(['chart', 'heatmap', 'footprint', 'whales', 'profile', 'tape', 'l3'])
+const RAIL_TABS = new Set<TabId>(['chart', 'heatmap', 'footprint', 'whales', 'profile', 'tape', 'l3', 'signals'])
 
 export default function Terminal() {
   const { tab, setTab, railOpen, toggleRail } = useTerminal()
@@ -72,6 +77,7 @@ export default function Terminal() {
           </aside>
         )}
       </main>
+      <MarketPicker />
       <footer className="flex h-6 shrink-0 items-center gap-3 overflow-x-auto border-t border-border/60 bg-[#0d1017] px-3 text-[10px] text-muted-foreground" role="contentinfo">
         <span>keys: <kbd className="rounded bg-muted px-1 font-mono">1–9,0</kbd> tabs · <kbd className="rounded bg-muted px-1 font-mono">G</kbd> guide · <kbd className="rounded bg-muted px-1 font-mono">B</kbd> book rail</span>
         <span className="hidden sm:inline">sources: Binance spot & futures · Deribit · alternative.me</span>

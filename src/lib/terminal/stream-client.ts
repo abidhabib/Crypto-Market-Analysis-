@@ -1,7 +1,7 @@
 'use client'
 
 import { io, type Socket } from 'socket.io-client'
-import type { Candle, HeatCol, Liq, Snapshot, Trade } from './types'
+import type { Candle, HeatCol, Liq, Snapshot, Trade, WallRec, PullEv, SweepEv, IceEv } from './types'
 
 /**
  * Singleton client for the terminal-stream socket.io service (port 3031 via
@@ -26,7 +26,13 @@ interface StreamState {
   mark: Snapshot['mark']
   oi: Snapshot['oi']
   liqs: Liq[]                // newest last
+  bookTop: { b: number; a: number } | null
+  walls: WallRec[]
+  pulls: PullEv[]            // newest last
+  sweeps: SweepEv[]
+  icebergs: IceEv[]
   lastMsgAt: number
+  lastTradeA: number         // highest aggTrade id applied (dedupe guard)
 }
 
 const state: StreamState = {
@@ -43,7 +49,13 @@ const state: StreamState = {
   mark: null,
   oi: null,
   liqs: [],
+  bookTop: null,
+  walls: [],
+  pulls: [],
+  sweeps: [],
+  icebergs: [],
   lastMsgAt: 0,
+  lastTradeA: 0,
 }
 
 let socket: Socket | null = null
@@ -64,7 +76,14 @@ function applySnapshot(snap: Snapshot) {
   state.mark = snap.mark
   state.oi = snap.oi
   state.liqs = snap.liqs ?? []
+  state.bookTop = snap.depth ? { b: snap.depth.bids[0]?.p ?? 0, a: snap.depth.asks[0]?.p ?? 0 } : null
+  state.walls = snap.walls ?? []
+  state.pulls = snap.pulls ?? []
+  state.sweeps = snap.sweeps ?? []
+  state.icebergs = snap.icebergs ?? []
   state.lastMsgAt = Date.now()
+  const lastSnapTrade = state.trades[state.trades.length - 1]
+  if (lastSnapTrade) state.lastTradeA = Math.max(state.lastTradeA, lastSnapTrade.a)
   listeners.forEach((l) => l())
 }
 
@@ -95,7 +114,11 @@ function ensureSocket(): Socket {
   })
   socket.on('trade', (e: { symbol: string; trades: Trade[] }) => {
     if (e.symbol !== wanted || !e.trades?.length) return
-    state.trades.push(...e.trades)
+    // drop trades already applied via snapshot (id guard — relay can overlap)
+    const fresh = e.trades.filter((t) => t.a > state.lastTradeA)
+    if (!fresh.length) return
+    state.lastTradeA = fresh[fresh.length - 1].a
+    state.trades.push(...fresh)
     if (state.trades.length > 6000) state.trades.splice(0, state.trades.length - 6000)
     state.lastMsgAt = Date.now()
     listeners.forEach((l) => l())
@@ -140,9 +163,38 @@ function ensureSocket(): Socket {
   socket.on('ladder-col', (e: { symbol: string; col: HeatCol }) => {
     if (e.symbol !== wanted) return
     state.heatCols.push(e.col)
-    if (state.heatCols.length > 900) state.heatCols.shift()
-    state.ladder = { bids: e.col.bids.slice(0, 50), asks: e.col.asks.slice(0, 50), t: e.col.t }
+    if (state.heatCols.length > 2400) state.heatCols.splice(0, state.heatCols.length - 2400)
+    state.ladder = { bids: e.col.bids, asks: e.col.asks, t: e.col.t }
     state.lastMsgAt = Date.now()
+    listeners.forEach((l) => l())
+  })
+  socket.on('bookTop', (e: { symbol: string; b: number; a: number }) => {
+    if (e.symbol !== wanted) return
+    state.bookTop = { b: e.b, a: e.a }
+    state.lastMsgAt = Date.now()
+    listeners.forEach((l) => l())
+  })
+  socket.on('walls', (e: { symbol: string; walls: WallRec[] }) => {
+    if (e.symbol !== wanted) return
+    state.walls = e.walls
+    listeners.forEach((l) => l())
+  })
+  socket.on('pull', (e: { symbol: string; ev: PullEv }) => {
+    if (e.symbol !== wanted) return
+    state.pulls.push(e.ev)
+    if (state.pulls.length > 400) state.pulls.shift()
+    listeners.forEach((l) => l())
+  })
+  socket.on('sweep', (e: { symbol: string; ev: SweepEv }) => {
+    if (e.symbol !== wanted) return
+    state.sweeps.push(e.ev)
+    if (state.sweeps.length > 300) state.sweeps.shift()
+    listeners.forEach((l) => l())
+  })
+  socket.on('iceberg', (e: { symbol: string; ev: IceEv }) => {
+    if (e.symbol !== wanted) return
+    state.icebergs.push(e.ev)
+    if (state.icebergs.length > 200) state.icebergs.shift()
     listeners.forEach((l) => l())
   })
   return socket
@@ -156,7 +208,9 @@ export function setStreamSymbol(symbol: string) {
   state.symbol = symbol
   state.trades = []; state.klines = []; state.heatCols = []; state.liqs = []
   state.ticker = null; state.depth = null; state.ladder = null; state.mark = null; state.oi = null
+  state.bookTop = null; state.walls = []; state.pulls = []; state.sweeps = []; state.icebergs = []
   state.status = 'connecting'
+  state.lastTradeA = 0
   if (socket?.connected) socket.emit('subscribe', { symbol })
   listeners.forEach((l) => l())
 }

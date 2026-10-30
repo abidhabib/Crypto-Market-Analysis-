@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import {
-  createChart, CandlestickSeries, HistogramSeries, LineSeries,
+  createChart, CandlestickSeries, HistogramSeries, LineSeries, AreaSeries,
   ColorType, CrosshairMode, LineStyle, createSeriesMarkers,
   type IChartApi, type ISeriesApi, type UTCTimestamp, type IPriceLine,
 } from 'lightweight-charts'
@@ -10,7 +10,8 @@ import { useTerminal } from '@/lib/terminal/store'
 import { getStream, setStreamSymbol } from '@/lib/terminal/stream-client'
 import { usePoll, useHotkeys } from '@/lib/terminal/hooks'
 import { aggregate, timeframeMs, ema, bollinger, rsi, sessionVwap } from '@/lib/terminal/indicators'
-import { symbolMeta, GREEN, RED, GRID, TEXT_DIM, TIMEFRAMES } from '@/lib/terminal/constants'
+import { levels as keyLevels } from '@/lib/terminal/analytics'
+import { metaFor, GREEN, RED, GRID, TEXT_DIM, TIMEFRAMES } from '@/lib/terminal/constants'
 import { fmtPrice, fmtCompact, fmtPct } from '@/lib/terminal/format'
 import { PanelHeader, SourceBadge } from './panel-kit'
 import { cn } from '@/lib/utils'
@@ -22,22 +23,26 @@ interface HLine { id: number; price: number }
 
 export default function ChartPanel() {
   const { symbol, timeframe, setTimeframe } = useTerminal()
-  const meta = symbolMeta(symbol)
+  const meta = metaFor(symbol)
   const wrapRef = useRef<HTMLDivElement>(null)
   const mainRef = useRef<HTMLDivElement>(null)
   const rsiWrapRef = useRef<HTMLDivElement>(null)
+  const cvdWrapRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
   const volRef = useRef<ISeriesApi<'Histogram'> | null>(null)
   const lineRefs = useRef<Record<string, ISeriesApi<'Line'>>>({})
   const rsiRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const cvdRef = useRef<ISeriesApi<'Area'> | null>(null)
+  const cvdChartRef = useRef<IChartApi | null>(null)
   const priceLineObjs = useRef<IPriceLine[]>([])
+  const levelLineObjs = useRef<IPriceLine[]>([])
   const markersApi = useRef<ReturnType<typeof createSeriesMarkers> | null>(null)
   const baseRef = useRef<Candle[]>([])
   const syncedRef = useRef('')
   const hModeRef = useRef(false)
 
-  const [ind, setInd] = useState({ ema20: true, ema50: true, bb: false, vwap: false, vol: true, rsi: true, whales: false })
+  const [ind, setInd] = useState({ ema20: true, ema50: true, bb: false, vwap: false, vol: true, rsi: true, whales: false, cvd: true, levels: false })
   const [hMode, setHMode] = useState(false)
   const [hLines, setHLines] = useState<HLine[]>([])
   const [legend, setLegend] = useState<{ o: number; h: number; l: number; c: number; v: number } | null>(null)
@@ -112,6 +117,27 @@ export default function ChartPanel() {
       rchart.timeScale().subscribeVisibleLogicalRangeChange((r) => { if (r) chart.timeScale().setVisibleLogicalRange(r) })
     }
 
+    let cchart: IChartApi | null = null
+    if (cvdWrapRef.current) {
+      cchart = createChart(cvdWrapRef.current, {
+        ...common,
+        rightPriceScale: { borderColor: GRID },
+        timeScale: { borderColor: GRID, timeVisible: true, secondsVisible: false, visible: false },
+      })
+      const cvdSeries = cchart.addSeries(AreaSeries, {
+        lineColor: '#4da3ff', topColor: 'rgba(77,163,255,0.25)', bottomColor: 'rgba(77,163,255,0.02)',
+        lineWidth: 1, priceLineVisible: false, lastValueVisible: true,
+      })
+      cvdRef.current = cvdSeries
+      cvdChartRef.current = cchart
+      // time-based sync so the live CVD window aligns to the right edge of the main chart
+      chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+        if (!cchart) return
+        const vr = chart.timeScale().getVisibleRange()
+        if (vr) { try { cchart.timeScale().setVisibleRange(vr) } catch { /* data not ready yet */ } }
+      })
+    }
+
     chart.subscribeCrosshairMove((param) => {
       const bar = param.seriesData.get(cs) as { open: number; high: number; low: number; close: number } | undefined
       const volBar = param.seriesData.get(vol) as { value: number } | undefined
@@ -135,16 +161,20 @@ export default function ChartPanel() {
     const ro = new ResizeObserver(() => {
       chart.applyOptions({ width: main.clientWidth, height: main.clientHeight })
       if (rsiWrapRef.current && rchart) rchart.applyOptions({ width: rsiWrapRef.current.clientWidth, height: rsiWrapRef.current.clientHeight })
+      if (cvdWrapRef.current && cchart) cchart.applyOptions({ width: cvdWrapRef.current.clientWidth, height: cvdWrapRef.current.clientHeight })
     })
     ro.observe(wrapRef.current)
     return () => {
       ro.disconnect()
       chart.remove()
       rchart?.remove()
+      cchart?.remove()
       chartRef.current = null
       candleRef.current = null
       volRef.current = null
       rsiRef.current = null
+      cvdRef.current = null
+      cvdChartRef.current = null
       lineRefs.current = {}
       markersApi.current = null
       priceLineObjs.current = []
@@ -243,6 +273,25 @@ export default function ChartPanel() {
         )
       } else markersApi.current.setMarkers([])
     }
+
+    // ---- CVD pane from the live trade window (bucketed to the timeframe)
+    if (cvdRef.current) {
+      if (ind.cvd && merged.length) {
+        const trades = getStream().trades
+        const buckets = new Map<number, number>()
+        for (const t of trades) {
+          const b = Math.floor(t.t / tfMs) * tfMs
+          const n = t.p * t.q
+          buckets.set(b, (buckets.get(b) ?? 0) + (t.m ? -n : n))
+        }
+        const sorted = [...buckets.entries()].sort((a, b) => a[0] - b[0])
+        let cum = 0
+        cvdRef.current.setData(sorted.map(([t, v]) => {
+          cum += v
+          return { time: (t / 1000) as UTCTimestamp, value: cum }
+        }))
+      } else cvdRef.current.setData([])
+    }
   }, [tick, ready, symbol, timeframe, ind])
 
   // ---- horizontal price lines
@@ -256,6 +305,47 @@ export default function ChartPanel() {
   }, [hLines, ready])
 
   const ticker = usePoll(() => getStream().ticker, 500)
+  const flowTick = usePoll(() => getStream().trades.length, 500)
+
+  // ---- key levels as price lines (POC / value area / 24h range)
+  useEffect(() => {
+    const cs = candleRef.current
+    if (!cs) return
+    levelLineObjs.current.forEach((pl) => cs.removePriceLine(pl))
+    levelLineObjs.current = []
+    if (!ind.levels || !ready) return
+    const kl = keyLevels()
+    const mk = (price: number | null | undefined, color: string, title: string, style: typeof LineStyle.Dotted = LineStyle.Dotted) => {
+      if (price == null || !isFinite(price)) return
+      levelLineObjs.current.push(cs.createPriceLine({
+        price, color, lineWidth: 1, lineStyle: style, axisLabelVisible: true, title,
+      }))
+    }
+    mk(kl?.poc, '#f0b90b', 'POC')
+    mk(kl?.vah, 'rgba(240,185,11,0.55)', 'VAH')
+    mk(kl?.val, 'rgba(240,185,11,0.55)', 'VAL')
+    mk(ticker?.h, 'rgba(139,147,167,0.75)', '24h Hi', LineStyle.Dashed)
+    mk(ticker?.l, 'rgba(139,147,167,0.75)', '24h Lo', LineStyle.Dashed)
+  }, [ind.levels, ticker, ready])
+
+  // ---- ATR(14) on the active timeframe + last-candle delta
+  const atrVal = (() => {
+    const all = baseRef.current
+    if (all.length < 16) return null
+    let sum = 0
+    for (let i = all.length - 14; i < all.length; i++) {
+      sum += Math.max(all[i].h - all[i].l, Math.abs(all[i].h - all[i - 1].c), Math.abs(all[i].l - all[i - 1].c))
+    }
+    return sum / 14
+  })()
+  const lastDelta = (() => {
+    if (!flowTick) return null
+    const tfMs = timeframeMs(timeframe)
+    const cutoff = Date.now() - tfMs
+    let d = 0
+    for (const t of getStream().trades) { if (t.t >= cutoff) d += t.m ? -t.q : t.q }
+    return d
+  })()
 
   return (
     <div className="flex h-full flex-col min-h-0" data-testid="panel-chart">
@@ -276,7 +366,7 @@ export default function ChartPanel() {
             </div>
             {([
               ['ema20', 'EMA20'], ['ema50', 'EMA50'], ['bb', 'BB'], ['vwap', 'VWAP'],
-              ['vol', 'Vol'], ['rsi', 'RSI'], ['whales', 'Whales'],
+              ['vol', 'Vol'], ['rsi', 'RSI'], ['cvd', 'CVD'], ['whales', 'Whales'], ['levels', 'Levels'],
             ] as const).map(([k, label]) => (
               <button key={k} onClick={() => setInd((s) => ({ ...s, [k]: !s[k] }))}
                 className={cn('rounded border px-1.5 py-1 text-[10px] font-medium',
@@ -321,6 +411,10 @@ export default function ChartPanel() {
               <span className="text-muted-foreground">L <span className="text-foreground/90">{fmtPrice(legend.l, meta.tick)}</span></span>
               <span className="text-muted-foreground">C <span className="text-foreground/90">{fmtPrice(legend.c, meta.tick)}</span></span>
               <span className="text-muted-foreground">Vol <span className="text-foreground/90">{fmtCompact(legend.v)}</span></span>
+              {atrVal != null && <span className="text-muted-foreground">ATR14 <span className="text-foreground/90">{fmtPrice(atrVal, meta.tick)}</span></span>}
+              {lastDelta != null && (
+                <span className="text-muted-foreground">Δ <span className={lastDelta >= 0 ? 'text-[#16c784]' : 'text-[#ea3943]'}>{lastDelta >= 0 ? '+' : ''}{lastDelta.toFixed(2)}</span></span>
+              )}
             </>
           )}
         </div>
@@ -332,7 +426,17 @@ export default function ChartPanel() {
                 <span>RSI (14)</span>
                 <SourceBadge label="live" />
               </div>
-              <div ref={rsiWrapRef} className="h-[14%] min-h-[70px]" />
+              <div ref={rsiWrapRef} className="h-[12%] min-h-[64px]" />
+            </>
+          )}
+          {ind.cvd && (
+            <>
+              <div className="flex items-center gap-2 px-2 pt-1 text-[10px] text-muted-foreground">
+                <span>CVD — cumulative volume delta (live window)</span>
+                <span className="text-muted-foreground/70">rising = aggressive buying dominates</span>
+                <SourceBadge label="live" />
+              </div>
+              <div ref={cvdWrapRef} className="h-[12%] min-h-[64px]" />
             </>
           )}
         </div>

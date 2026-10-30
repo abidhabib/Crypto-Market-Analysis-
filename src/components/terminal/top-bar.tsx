@@ -4,19 +4,23 @@ import { useEffect } from 'react'
 import { useTerminal } from '@/lib/terminal/store'
 import { setStreamSymbol, getStream } from '@/lib/terminal/stream-client'
 import { usePoll, useNow } from '@/lib/terminal/hooks'
-import { SYMBOLS, symbolMeta } from '@/lib/terminal/constants'
+import { metaFor } from '@/lib/terminal/constants'
 import { fmtPrice, fmtPct, fmtCompact } from '@/lib/terminal/format'
 import { cn } from '@/lib/utils'
-import { PanelRight, Activity } from 'lucide-react'
+import { PanelRight, Activity, ChevronDown } from 'lucide-react'
 
 export default function TopBar({ status }: { status: 'connecting' | 'live' | 'offline' }) {
-  const { symbol, setSymbol, toggleRail, railOpen } = useTerminal()
-  const meta = symbolMeta(symbol)
+  const { symbol, setSymbol, toggleRail, railOpen, setScannerOpen } = useTerminal()
+  const meta = metaFor(symbol)
 
   useEffect(() => { setStreamSymbol(symbol) }, [symbol])
 
   const ticker = usePoll(() => getStream().ticker, 400)
+  const bookTop = usePoll(() => getStream().bookTop, 200)
+  const mid = bookTop ? (bookTop.b + bookTop.a) / 2 : ticker?.c ?? null
   const up = (ticker?.P ?? 0) >= 0
+  const tickUp = bookTop ? bookTop.a >= (ticker?.c ?? 0) : up
+  const spreadTicks = bookTop && bookTop.a > bookTop.b ? Math.max(1, Math.round((bookTop.a - bookTop.b) / meta.tick)) : null
   const clock = useNow(1000)
 
   return (
@@ -31,20 +35,19 @@ export default function TopBar({ status }: { status: 'connecting' | 'live' | 'of
         </div>
       </div>
 
-      <div className="ml-1 flex items-center gap-1.5">
-        <select
-          value={symbol}
-          onChange={(e) => setSymbol(e.target.value)}
-          aria-label="Symbol"
-          className="h-8 rounded-md border border-border bg-background px-2 font-mono text-xs font-semibold"
-        >
-          {SYMBOLS.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-        </select>
-      </div>
+      <button
+        onClick={() => setScannerOpen(true)}
+        aria-label="Pick a market"
+        title="Pick a market — all USDT pairs, 24h stats"
+        className="ml-1 flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 font-mono text-xs font-semibold hover:border-[#4da3ff]/60"
+      >
+        {meta.label}
+        <ChevronDown className="size-3.5 text-muted-foreground" />
+      </button>
 
       <div className="hidden items-baseline gap-2 sm:flex" aria-live="polite">
-        <span className={cn('font-mono text-lg font-bold tabular-nums', up ? 'text-[#16c784]' : 'text-[#ea3943]')}>
-          {fmtPrice(ticker?.c, meta.tick)}
+        <span className={cn('font-mono text-lg font-bold tabular-nums', tickUp ? 'text-[#16c784]' : 'text-[#ea3943]')}>
+          {fmtPrice(mid, meta.tick)}
         </span>
         <span className={cn('rounded px-1.5 py-0.5 font-mono text-[11px] font-semibold',
           up ? 'bg-[#16c784]/15 text-[#16c784]' : 'bg-[#ea3943]/15 text-[#ea3943]')}>
@@ -53,6 +56,9 @@ export default function TopBar({ status }: { status: 'connecting' | 'live' | 'of
       </div>
 
       <div className="hidden gap-4 font-mono text-[10px] text-muted-foreground lg:flex">
+        <span>bid <span className="text-[#16c784]">{fmtPrice(bookTop?.b, meta.tick)}</span></span>
+        <span>ask <span className="text-[#ea3943]">{fmtPrice(bookTop?.a, meta.tick)}</span></span>
+        <span>spread <span className="text-foreground/90">{spreadTicks != null ? `${spreadTicks} tick${spreadTicks === 1 ? '' : 's'}` : '—'}</span></span>
         <span>24h high <span className="text-foreground/90">{fmtPrice(ticker?.h, meta.tick)}</span></span>
         <span>24h low <span className="text-foreground/90">{fmtPrice(ticker?.l, meta.tick)}</span></span>
         <span>24h vol <span className="text-foreground/90">{fmtCompact(ticker?.q, '$')}</span></span>

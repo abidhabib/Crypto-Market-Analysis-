@@ -5,6 +5,10 @@ export interface HeatCol { t: number; mid: number; bids: Level[]; asks: Level[] 
 export interface Liq { t: number; side: 'BUY' | 'SELL'; p: number; q: number }
 export interface Ticker { c: number; P: number; h: number; l: number; v: number; q: number; b: number; a: number }
 export interface Mark { p: number; funding: number; nextFunding: number; index: number }
+export interface WallRec { side: 'bid' | 'ask'; p: number; q: number; firstSeen: number; pulls: number; maxQ: number }
+export interface PullEv { t: number; side: 'bid' | 'ask'; p: number; size: number; lasted: number; count: number }
+export interface SweepEv { t: number; side: 'bid' | 'ask'; p: number; size: number; trade: number }
+export interface IceEv { t: number; side: 'bid' | 'ask'; p: number; size: number; refills: number }
 
 export interface Snapshot {
   symbol: string
@@ -20,6 +24,10 @@ export interface Snapshot {
   mark: Mark | null
   oi: { oi: number; t: number } | null
   liqs: Liq[]
+  walls: WallRec[]
+  pulls: PullEv[]
+  sweeps: SweepEv[]
+  icebergs: IceEv[]
 }
 
 export interface StrikeGex {
