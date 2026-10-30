@@ -106,6 +106,11 @@ function ensureSocket(): Socket {
     }
   }
   socket.io.on('error', (err) => console.warn('[stream] manager error', err))
+  socket.on('disconnect', () => {
+    state.status = 'offline'
+    state.lastError = 'Market data connection lost; reconnecting'
+    listeners.forEach(l => l())
+  })
   socket.on('connect_error', (err) => console.warn('[stream] connect_error:', err.message))
   socket.on('connect', () => console.info('[stream] connected via', socket!.io.engine.transport.name))
   socket.on('connect', () => socket!.emit('subscribe', { symbol: wanted }))

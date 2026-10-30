@@ -38,7 +38,7 @@ const io = new Server(httpServer, {
 interface Trade { a: number; p: number; q: number; t: number; m: boolean }
 interface Candle { t: number; o: number; h: number; l: number; c: number; v: number }
 interface Level { p: number; q: number }
-interface HeatCol { t: number; mid: number; bids: Level[]; asks: Level[] }
+interface HeatCol { t: number; mid: number; bids: Level[]; asks: Level[]; bookMode?: 'synced' | 'partial' | 'unknown'; sourceAt?: number; bookEpoch?: number; sampled?: boolean }
 interface Liq { t: number; side: 'BUY' | 'SELL'; p: number; q: number }
 interface WallRec { side: 'bid' | 'ask'; p: number; q: number; firstSeen: number; pulls: number; maxQ: number }
 interface PullEv { t: number; side: 'bid' | 'ask'; p: number; size: number; lasted: number; count: number }
@@ -68,6 +68,8 @@ interface SymbolState {
   asks: Map<string, number>
   lastUpdateId: number
   bookReady: boolean
+  lastDepthAt: number
+  bookEpoch: number
   seededPartial: boolean      // book built from WS top-20 (REST unavailable)
   lastPartial?: { lastUpdateId: number; bids: [string, string][]; asks: [string, string][] }
   lastPartialAt: number
@@ -105,7 +107,7 @@ const state = (symbol: string): SymbolState => {
   if (!s) {
     s = {
       symbol, streams: 0, status: 'connecting',
-      bids: new Map(), asks: new Map(), lastUpdateId: 0, bookReady: false, seededPartial: false,
+      bids: new Map(), asks: new Map(), lastUpdateId: 0, bookReady: false, seededPartial: false, lastDepthAt: 0, bookEpoch: 0,
       lastPartialAt: 0, lastSyncAttempt: 0, syncBackoff: 5000, diffBuffer: [], syncing: false,
       bookTop: { b: 0, a: 0 },
       trades: [], klines: [], lastDepthPayload: '', heatCols: [], liqs: [],
@@ -283,6 +285,8 @@ async function syncBook(s: SymbolState) {
     s.lastUpdateId = snap.lastUpdateId
     s.bookReady = true
     s.seededPartial = false
+    s.lastDepthAt = Date.now()
+    s.bookEpoch++
     s.syncBackoff = 5000
     s.lastError = undefined
     console.log(`[book] synced ${s.symbol}: lastUpdateId=${snap.lastUpdateId} bids=${s.bids.size} asks=${s.asks.size} buffered=${s.diffBuffer.length}`)
@@ -291,7 +295,7 @@ async function syncBook(s: SymbolState) {
     s.diffBuffer = []
     for (const d of buf) {
       if (d.u <= s.lastUpdateId) continue
-      if (d.U > s.lastUpdateId + 1) { s.syncing = false; return syncBook(s) } // gap — resync
+      if (d.U > s.lastUpdateId + 1) { s.bookReady = false; s.syncing = false; return syncBook(s) } // gap — resync
       applyDiff(s, d.U, d.u, d.b, d.a)
     }
   } catch (e) {
@@ -317,9 +321,11 @@ function seedFromPartial(s: SymbolState) {
   for (const [ps, qs] of d.asks) { const q = +qs; if (q > 0) s.asks.set(String(+ps), q) }
   if (!s.bids.size || !s.asks.size) return
   const wasReady = s.bookReady
+  if (!wasReady || !s.seededPartial) s.bookEpoch++
   s.lastUpdateId = d.lastUpdateId
   s.bookReady = true
   s.seededPartial = true
+  s.lastDepthAt = s.lastPartialAt || Date.now()
   s.lastError = undefined
   s.status = 'live'
   medianNotional(s)
@@ -330,6 +336,7 @@ function seedFromPartial(s: SymbolState) {
 }
 
 function handleBookDiff(s: SymbolState, d: any) {
+  s.lastDepthAt = Date.now()
   if (!s.bookReady) {
     s.diffBuffer.push(d)
     if (s.diffBuffer.length > 800) s.diffBuffer.shift()
@@ -558,6 +565,7 @@ function emitHeatCol(s: SymbolState) {
   const lo = mid * 0.9935, hi = mid * 1.0065 // ±0.65% window
   const col: HeatCol = {
     t: Date.now(), mid,
+    bookMode: s.seededPartial ? 'partial' : 'synced', sourceAt: s.lastDepthAt, bookEpoch: s.bookEpoch,
     bids: collectLevels(s.bids, false, lo, hi, 260),
     asks: collectLevels(s.asks, true, lo, hi, 260),
   }
@@ -634,16 +642,9 @@ function snapshotHeatCols(s: SymbolState): HeatCol[] {
   const out: HeatCol[] = []
   for (let i = 0; i < raw.length; i += group) {
     const end = Math.min(raw.length, i + group)
-    const bids = new Map<number, number>(), asks = new Map<number, number>()
-    let mid = 0
-    for (let j = i; j < end; j++) {
-      const c = raw[j]
-      mid = c.mid
-      for (const l of c.bids) { const q0 = bids.get(l.p); if (q0 === undefined || l.q > q0) bids.set(l.p, l.q) }
-      for (const l of c.asks) { const q0 = asks.get(l.p); if (q0 === undefined || l.q > q0) asks.set(l.p, l.q) }
-    }
     const last = raw[end - 1]
-    out.push({ t: last.t, mid, bids: [...bids].map(([p, q]) => ({ p, q })), asks: [...asks].map(([p, q]) => ({ p, q })) })
+    // Preserve an actual observed book, not a synthetic maximum across time.
+    out.push({ ...last, sampled: true })
   }
   return out
 }

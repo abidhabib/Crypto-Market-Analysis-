@@ -22,6 +22,15 @@ Open http://localhost:3000. The live Socket.IO service listens on port 3031. Run
 
 The heatmap uses recorded order book snapshots and trades. Its history is held in memory and resets when the stream service restarts. Nearby executions are grouped into bubbles; these do not identify individual traders or wallets.
 
+## Heatmap analysis and replay
+
+- Nearby liquidity shows its observed age and replenishment count. Ages are lower bounds from the available recording and restart after gaps or book rebuilds.
+- The Reactions toggle adds compact touch, rejection, replenishment, possible consumption/withdrawal and possible absorption markers. Hover markers or expand an observed reaction for its evidence and limitations.
+- Data quality reports synchronized versus partial/unknown books, source depth age, missing intervals, book rebuilds and sampled history. Expand it for the detection rules and available trade history.
+- Replay history captures the current in-memory recording. Scrub, step through snapshots, play at different speeds, or inspect an event in replay. Price, volume metrics and annotations use only observations at or before the playhead. Return to live resumes the incoming feed.
+
+Absorption and order-removal classifications are snapshot heuristics, not proof of hidden orders, cancellations or future price direction. Missing trade history is not reconstructed or filled with synthetic executions.
+
 ## Vercel deployment
 
 Vercel's [Hobby plan](https://vercel.com/docs/plans/hobby) is free within its quotas for personal, non-commercial use. The Next.js dashboard can be hosted there. Use the Next.js preset, pnpm install, and `pnpm build`.
@@ -39,6 +48,6 @@ node --experimental-strip-types tests/heatmap-model.test.mjs
 pnpm lint
 ```
 
-The heatmap calculation tests cover historical inspection, liquidity binning, aggressor flow, trade clustering and bubble area scaling. Existing project-wide TypeScript errors remain in other panels, and `next.config.ts` currently permits builds with type errors.
+The heatmap calculation tests cover historical inspection, liquidity binning, aggressor flow, trade clustering, bubble area scaling, persistence/replenishment, reactions, data quality and replay without future-data leakage. Existing project-wide TypeScript errors remain in other panels, and `next.config.ts` currently permits builds with type errors.
 
 Market context and displayed analytics are descriptive; they are not validated profitability predictions.

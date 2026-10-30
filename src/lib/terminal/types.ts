@@ -1,7 +1,13 @@
 export interface Trade { a: number; p: number; q: number; t: number; m: boolean }
 export interface Candle { t: number; o: number; h: number; l: number; c: number; v: number }
 export interface Level { p: number; q: number }
-export interface HeatCol { t: number; mid: number; bids: Level[]; asks: Level[] }
+export interface HeatCol {
+  t: number; mid: number; bids: Level[]; asks: Level[]
+  bookMode?: 'synced' | 'partial' | 'unknown'
+  sourceAt?: number
+  bookEpoch?: number
+  sampled?: boolean
+}
 export interface Liq { t: number; side: 'BUY' | 'SELL'; p: number; q: number }
 export interface Ticker { c: number; P: number; h: number; l: number; v: number; q: number; b: number; a: number }
 export interface Mark { p: number; funding: number; nextFunding: number; index: number }

@@ -31,7 +31,7 @@ export default function TopBar({ status }: { status: 'connecting' | 'live' | 'of
         </div>
         <div className="leading-none">
           <div className="text-sm font-bold tracking-tight">OrderFlow <span className="text-[#f0b90b]">Terminal</span></div>
-          <div className="mt-0.5 text-[9px] uppercase tracking-wider text-muted-foreground">live market analysis</div>
+          <div className="mt-0.5 text-[9px] uppercase tracking-wider text-muted-foreground">by <span className="text-[#f0b90b]">abidhabib</span></div>
         </div>
       </div>
 

@@ -1,5 +1,5 @@
 import type { HeatCol, Trade } from './types'
-import { binDepth, bubbleRadius, groupTrades } from './heatmap-model'
+import { binDepth, bubbleRadius, groupTrades, reactionCodes, reactionColors, type HeatmapReaction, type LiquidityZone } from './heatmap-model'
 
 export const BID_COLOR = '#38bdf8'
 export const ASK_COLOR = '#f5b94c'
@@ -8,6 +8,8 @@ export interface HeatmapView {
   range: number; step: number; contrast: number; minTrade: number
   bubbleScale: number
   bubbles?: ReturnType<typeof getTradeBubbles>
+  zones?: readonly LiquidityZone[]
+  reactions?: readonly HeatmapReaction[]
   showTrades: boolean; showProfile: boolean; columns: readonly HeatCol[]; trades: readonly Trade[]
   formatPrice: (price: number) => string
   pointer: { x: number; y: number } | null
@@ -38,6 +40,19 @@ export function getTradeBubbles(v: HeatmapView) {
   return groupTrades(v.trades, g.start, v.end, timeStep, priceStep, v.minTrade)
     .filter(tr => tr.p >= g.low && tr.p <= g.high)
     .map(tr => ({ ...tr, x: g.x(tr.t), y: g.y(tr.p), r: bubbleRadius(tr.usd, v.bubbleScale) }))
+}
+
+export function getReactionMarkers(v: HeatmapView) {
+  const g = heatmapGeometry(v)
+  const markers: (HeatmapReaction & { x: number; y: number })[] = []
+  const candidates = [...(v.reactions ?? [])].filter(e => e.t >= g.start && e.t <= v.end && e.price >= g.low && e.price <= g.high)
+    .sort((a, b) => Number(a.kind === 'touch') - Number(b.kind === 'touch') || b.t - a.t)
+  for (const e of candidates) {
+    const x = g.x(e.t), y = g.y(e.price)
+    if (markers.length >= 12 || markers.some(m => Math.hypot(x - m.x, y - m.y) < 25)) continue
+    markers.push({ ...e, x, y })
+  }
+  return markers
 }
 
 export function drawHeatmap(ctx: CanvasRenderingContext2D, v: HeatmapView) {
@@ -82,6 +97,23 @@ export function drawHeatmap(ctx: CanvasRenderingContext2D, v: HeatmapView) {
   for (let i = 0; i <= 4; i++) {
     const cx = left + (right - left) * i / 4
     ctx.beginPath(); ctx.moveTo(cx, top); ctx.lineTo(cx, bottom); ctx.stroke()
+  }
+
+  // Persistence outlines describe observed duration; no extrapolation before recording.
+  const persistent = (v.zones ?? []).filter(z => z.lastSeen - z.firstSeen >= 15000 && z.price >= low && z.price <= high).slice(0, 4)
+  const labelRows: number[] = []
+  for (const z of persistent) {
+    const cy = y(z.price), cx = Math.max(left, x(z.firstSeen))
+    const color = z.side === 'bid' ? BID_COLOR : ASK_COLOR
+    ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.setLineDash([3, 5]); ctx.globalAlpha = 0.6
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(right, cy); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1
+    if (Math.abs(cy - y(v.mid)) < 22 || labelRows.some(row => Math.abs(row - cy) < 18)) continue
+    const age = Math.floor((z.lastSeen - z.firstSeen) / 1000)
+    const text = `≥${age}s${z.replenishments ? ` · +${z.replenishments} refills` : ''}`
+    ctx.font = '10px ui-monospace, monospace'; ctx.textAlign = 'right'
+    const tw = ctx.measureText(text).width + 10
+    ctx.fillStyle = '#090f18df'; ctx.fillRect(right - tw - 4, cy - 16, tw, 14)
+    ctx.fillStyle = color; ctx.fillText(text, right - 8, cy - 6); labelRows.push(cy)
   }
 
   if (v.showTrades) {
@@ -132,6 +164,13 @@ export function drawHeatmap(ctx: CanvasRenderingContext2D, v: HeatmapView) {
   if (latest) {
     ctx.beginPath(); ctx.arc(Math.min(right, x(latest.t)), y(latest.mid), 3, 0, Math.PI * 2)
     ctx.fillStyle = '#f8fafc'; ctx.fill()
+  }
+  for (const e of getReactionMarkers(v)) {
+    const color = reactionColors[e.kind]
+    ctx.fillStyle = '#101827'; ctx.strokeStyle = color; ctx.lineWidth = 1.5
+    ctx.beginPath(); ctx.rect(e.x - 8, e.y - 8, 16, 16); ctx.fill(); ctx.stroke()
+    ctx.font = 'bold 10px ui-monospace, monospace'; ctx.textAlign = 'center'; ctx.fillStyle = color
+    ctx.fillText(reactionCodes[e.kind], e.x, e.y + 3.5)
   }
   if (v.pointer && v.pointer.x >= left && v.pointer.x <= right && v.pointer.y >= top && v.pointer.y <= bottom) {
     ctx.strokeStyle = '#dbeafe70'; ctx.setLineDash([3, 4])
