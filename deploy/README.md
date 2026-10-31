@@ -38,6 +38,8 @@ A successful local stream handshake proves the stream process responds, not that
 
 Startup depth history is sampled across the recorded window to a 384 KiB JSON budget. The previous column-count limit could produce 10 MB frames that blocked live updates on slower connections. Sampled books remain actual observations and carry the sampled flag; missing intervals are not reconstructed. New live columns retain their normal detail.
 
+WebSocket depth messages use per-message compression with two concurrent compression jobs and no retained compression context. This reduces repetitive price/size traffic so live books do not queue ahead of heartbeat messages on slower links.
+
 Release archives and previous image references live in `/opt/tradizone/releases/<SHA>/`. The active commit is recorded in `/opt/tradizone/current-release`. Old images are retained for rollback; monitor disk use and remove only verified obsolete Tradizone artifacts. No global Docker prune, PM2 restart, Nginx restart or host Node upgrade is performed.
 
 Read-only status commands on the VPS:

@@ -32,6 +32,16 @@ const httpServer = createServer()
 const io = new Server(httpServer, {
   path: '/',
   cors: { origin: '*', methods: ['GET', 'POST'] },
+  // Repeated price/size JSON compresses well. Keep live books from queuing
+  // ahead of heartbeats on slower links, with bounded compression concurrency.
+  perMessageDeflate: {
+    threshold: 1024,
+    serverNoContextTakeover: true,
+    clientNoContextTakeover: true,
+    serverMaxWindowBits: 12,
+    concurrencyLimit: 2,
+    zlibDeflateOptions: { level: 3, memLevel: 7 },
+  },
   pingTimeout: 60000,
   pingInterval: 25000,
 })
