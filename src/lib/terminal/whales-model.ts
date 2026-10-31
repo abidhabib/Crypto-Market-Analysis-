@@ -136,6 +136,11 @@ export function whaleAnalysis(trades: readonly Trade[], start: number, end: numb
 }
 export type WhaleAnalysis = ReturnType<typeof whaleAnalysis>
 
+/** Freshness must compare receipt times from one client clock, not exchange and VPS timestamps. */
+export function recentWhaleTrades(status: string, receivedAt: number, clientNow: number) {
+  return status === 'live' && receivedAt > 0 && Math.max(0, clientNow - receivedAt) < 15000
+}
+
 /** Radius uses square root so circle area is proportional to notional, until the display cap. */
 export function whaleRadius(total: number, reference: number, min = 5, max = 38) {
   return Math.min(max, Math.max(min, max * Math.sqrt(Math.max(0, total) / Math.max(1, reference))))

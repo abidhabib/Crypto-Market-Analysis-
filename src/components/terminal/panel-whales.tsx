@@ -9,7 +9,7 @@ import { metaFor, TIMEFRAMES } from '@/lib/terminal/constants'
 import { timeframeMs } from '@/lib/terminal/indicators'
 import { fmtCompact, fmtPct, fmtPrice } from '@/lib/terminal/format'
 import { cn } from '@/lib/utils'
-import { whaleAnalysis, whaleCandles, whaleContext, whaleModes, type WhaleMode } from '@/lib/terminal/whales-model'
+import { whaleAnalysis, whaleCandles, whaleContext, whaleModes, recentWhaleTrades, type WhaleMode } from '@/lib/terminal/whales-model'
 import { drawWhales, drawWhalesCursor, nearestWhale, whaleBubblePoints, whalesGeometry, whaleTooltipPriceChange, WHALE_BUY, WHALE_SELL, type WhalesView, type WhaleBubblePoint } from '@/lib/terminal/whales-renderer'
 import { useHeatmapNavigation } from '@/lib/terminal/use-heatmap-navigation'
 import { constrainViewport, zoomViewport, type MapViewport } from '@/lib/terminal/heatmap-navigation'
@@ -118,7 +118,7 @@ function WhalesWorkspace({ symbol }: { symbol: string }) {
   const candle = hoverTime === null ? null : visibleCandles.find(c => c.t <= hoverTime && c.t + tfMs > hoverTime) ?? null
   const hoveredBar = candle ? analysis.bars.find(b => b.t === candle.t) : null
   const coverage = analysis.first === null || analysis.last === null ? 0 : analysis.last - analysis.first
-  const live = feed.status === 'live' && feed.observedAt - (analysis.last ?? 0) < 15000 && !historical && !frozen
+  const live = recentWhaleTrades(feed.status, feed.lastTradeReceivedAt, feed.clientObservedAt) && !historical && !frozen
   const outside = lines.filter(l => l.price < view.low || l.price > view.high)
   const toggle = (label: string, value: boolean, set: (value: boolean) => void, help: string) => <button key={label} type="button" title={help} aria-label={`Toggle whale ${label}`} aria-pressed={value} onClick={() => set(!value)} className={cn(control, value ? 'border-white/15 bg-white/[0.06] text-slate-200' : 'border-transparent text-slate-500 hover:text-slate-300')}><span className={cn('size-1.5 rounded-full', value ? 'bg-slate-300' : 'border border-slate-600')} />{label}</button>
 

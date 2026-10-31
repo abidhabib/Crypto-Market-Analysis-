@@ -32,6 +32,7 @@ interface StreamState {
   sweeps: SweepEv[]
   icebergs: IceEv[]
   lastMsgAt: number
+  lastTradeReceivedAt: number // live trade-event receipt, independent of exchange/server clock skew
   lastTradeA: number         // highest aggTrade id applied (dedupe guard)
 }
 
@@ -55,6 +56,7 @@ const state: StreamState = {
   sweeps: [],
   icebergs: [],
   lastMsgAt: 0,
+  lastTradeReceivedAt: 0,
   lastTradeA: 0,
 }
 
@@ -128,6 +130,7 @@ function ensureSocket(): Socket {
     if (!fresh.length) return
     state.lastTradeA = fresh[fresh.length - 1].a
     state.trades.push(...fresh)
+    state.lastTradeReceivedAt = Date.now()
     if (state.trades.length > 6000) state.trades.splice(0, state.trades.length - 6000)
     state.lastMsgAt = Date.now()
     listeners.forEach((l) => l())
@@ -220,6 +223,7 @@ export function setStreamSymbol(symbol: string) {
   state.bookTop = null; state.walls = []; state.pulls = []; state.sweeps = []; state.icebergs = []
   state.status = 'connecting'
   state.lastTradeA = 0
+  state.lastTradeReceivedAt = 0
   if (socket?.connected) socket.emit('subscribe', { symbol })
   listeners.forEach((l) => l())
 }

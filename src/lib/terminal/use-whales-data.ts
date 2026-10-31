@@ -9,7 +9,8 @@ import type { WhaleHistoryPage } from './whales-history'
 
 function capture(symbol: string) {
   const s = getStream(), same = s.symbol === symbol
-  return { symbol, observedAt: now(), status: same ? s.status : 'connecting' as const, lastMsgAt: same ? s.lastMsgAt : 0,
+  return { symbol, observedAt: now(), clientObservedAt: Date.now(), status: same ? s.status : 'connecting' as const, lastMsgAt: same ? s.lastMsgAt : 0,
+    lastTradeReceivedAt: same ? s.lastTradeReceivedAt : 0,
     trades: same ? s.trades.slice() : [] as Trade[], klines: same ? s.klines.map(c => ({ ...c })) : [] as Candle[],
     mid: same ? s.bookTop ? (s.bookTop.b + s.bookTop.a) / 2 : s.ticker?.c ?? null : null,
     plan: same ? decisionLevels() : null }

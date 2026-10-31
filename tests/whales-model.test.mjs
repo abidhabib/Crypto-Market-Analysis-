@@ -1,9 +1,16 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mergeWhaleTrades, detectWhaleEvents, whaleAnalysis, whaleRadius, whaleCandles } from '../src/lib/terminal/whales-model.ts'
+import { mergeWhaleTrades, detectWhaleEvents, whaleAnalysis, whaleRadius, whaleCandles, recentWhaleTrades } from '../src/lib/terminal/whales-model.ts'
 
 const trade = (a, t, p, q, m = false) => ({ a, t, p, q, m })
 const options = { mode: 'print', threshold: 1000, step: 1, windowMs: 500, minLevels: 2 }
+test('live trade status uses client receipts even when the VPS/exchange clock differs', () => {
+  const clientNow = 100000, receivedAt = 99500
+  assert.equal(recentWhaleTrades('live', receivedAt, clientNow), true)
+  assert.equal(recentWhaleTrades('live', receivedAt, clientNow + 20000), false)
+  assert.equal(recentWhaleTrades('offline', receivedAt, clientNow), false)
+  assert.equal(recentWhaleTrades('live', 0, clientNow), false)
+})
 test('overlapping history/live pages are deduplicated by exchange ID; invalid values are rejected', () => {
   const a = trade(1, 1000, 100, 2), b = trade(2, 1100, 101, 3)
   assert.deepEqual(mergeWhaleTrades([b, a], [a, { ...b, q: 4 }, trade(3, 1200, 0, 1)]), [a, { ...b, q: 4 }])

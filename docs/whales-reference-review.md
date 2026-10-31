@@ -22,6 +22,8 @@ Plan uses existing Signals trigger levels, hidden in earlier historical views. G
 
 The chart uses one time/price projection for candles, bubbles, averages, zones, profile and cursor. A cached scene keeps pointer movement independent of model calculation. Wheel/trackpad/touch use shared navigation with Whales-specific bounds; Heatmap defaults are preserved.
 
+The live-execution badge uses receipt times of new trade events on the browser's own clock. VPS and exchange timestamp differences cannot falsely mark an active feed stale; historical snapshots alone do not count as a new live trade.
+
 ## Sources
 
 - [Binance aggregate trade stream and maker flag](https://developers.binance.com/docs/binance-spot-api-docs/web-socket-streams)
