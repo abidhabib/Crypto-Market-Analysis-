@@ -25,6 +25,7 @@
  */
 import { createServer } from 'http'
 import { Server } from 'socket.io'
+import { snapshotHistory } from './snapshot-history.ts'
 
 const PORT = 3031
 const httpServer = createServer()
@@ -631,22 +632,11 @@ function releaseSymbol(symbol: string) {
 }
 
 /**
- * History replay for snapshots: decimate the raw heat buffer so the client
- * gets depth coverage over the WHOLE recorded window (up to ~12 min) while
- * keeping the payload near the proven size (~800 columns).
+ * Bound startup history by bytes, not just column count. Full-depth columns
+ * made the old 800-column snapshot exceed 10 MB and block live delivery.
  */
 function snapshotHeatCols(s: SymbolState): HeatCol[] {
-  const raw = s.heatCols
-  if (raw.length <= 800) return raw.slice()
-  const group = Math.ceil(raw.length / 800)
-  const out: HeatCol[] = []
-  for (let i = 0; i < raw.length; i += group) {
-    const end = Math.min(raw.length, i + group)
-    const last = raw[end - 1]
-    // Preserve an actual observed book, not a synthetic maximum across time.
-    out.push({ ...last, sampled: true })
-  }
-  return out
+  return snapshotHistory(s.heatCols)
 }
 
 function snapshot(s: SymbolState) {
@@ -691,12 +681,14 @@ io.on('connection', (socket) => {
       socket.emit('status', { symbol, status: 'offline', error: 'unsupported symbol' })
       return
     }
-    if (current && current !== symbol) releaseSymbol(current)
+    if (current === symbol) return
+    if (current) releaseSymbol(current)
     current = symbol
     const s = state(symbol)
-    socket.emit('snapshot', snapshot(s))
+    // Send status immediately; send the snapshot once after initialization.
     socket.emit('status', { symbol, status: s.status, error: s.lastError ?? null })
     await ensureSymbol(symbol)
+    if (!socket.connected || current !== symbol) return
     socket.emit('snapshot', snapshot(s))
     socket.emit('status', { symbol, status: s.status, error: s.lastError ?? null })
   })

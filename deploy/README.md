@@ -36,6 +36,8 @@ After recreation it waits for container health and checks the local dashboard an
 
 A successful local stream handshake proves the stream process responds, not that Binance or other upstream services are reachable. Check real prices/trades in the browser after a backend change.
 
+Startup depth history is sampled across the recorded window to a 384 KiB JSON budget. The previous column-count limit could produce 10 MB frames that blocked live updates on slower connections. Sampled books remain actual observations and carry the sampled flag; missing intervals are not reconstructed. New live columns retain their normal detail.
+
 Release archives and previous image references live in `/opt/tradizone/releases/<SHA>/`. The active commit is recorded in `/opt/tradizone/current-release`. Old images are retained for rollback; monitor disk use and remove only verified obsolete Tradizone artifacts. No global Docker prune, PM2 restart, Nginx restart or host Node upgrade is performed.
 
 Read-only status commands on the VPS:

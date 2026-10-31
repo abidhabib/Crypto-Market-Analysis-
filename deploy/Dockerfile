@@ -13,6 +13,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV DATABASE_URL=file:/tmp/unused.db
 RUN node --experimental-strip-types tests/heatmap-model.test.mjs \
  && node --experimental-strip-types tests/heatmap-navigation.test.mjs \
+ && node --experimental-strip-types tests/stream-snapshot.test.mjs \
  && node tests/heatmap-orderflow.test.mjs \
  && pnpm exec eslint src/components/terminal/panel-heatmap.tsx src/components/terminal/heatmap-orderflow-controls.tsx src/lib/terminal/heatmap-model.ts src/lib/terminal/heatmap-orderflow.ts src/lib/terminal/heatmap-columns-renderer.ts src/lib/terminal/heatmap-renderer.ts src/lib/terminal/use-heatmap-navigation.ts \
  && pnpm run build
@@ -38,6 +39,7 @@ WORKDIR /app
 ENV NODE_ENV=production
 RUN npm install --omit=dev --ignore-scripts --package-lock=false socket.io@4.8.4 && npm cache clean --force
 COPY --chown=node:node mini-services/terminal-stream/index.ts ./index.ts
+COPY --chown=node:node mini-services/terminal-stream/snapshot-history.ts ./snapshot-history.ts
 USER node
 EXPOSE 3031
 CMD ["node", "--experimental-strip-types", "index.ts"]
