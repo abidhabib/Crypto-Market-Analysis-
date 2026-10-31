@@ -54,6 +54,7 @@ export type TimeframeId = (typeof TIMEFRAMES)[number]['id']
 
 export const TABS = [
   { id: 'chart', label: 'Chart', key: '1', hint: 'Pro chart — indicators and drawing tools (key 1)' },
+  { id: 'bubbles', label: 'Crypto Bubbles', key: 'c', hint: 'Live interactive Crypto Bubbles market view (key C)' },
   { id: 'heatmap', label: 'Heatmap', key: '2', hint: 'Liquidity heatmap — depth, trade bubbles, spoof detection (key 2)' },
   { id: 'footprint', label: 'Footprint', key: '3', hint: 'Footprint (key 3)' },
   { id: 'whales', label: 'Whales', key: '4', hint: 'Large execution bubbles, buyer/seller VWAP, zones and net flow (key 4)' },
@@ -65,7 +66,6 @@ export const TABS = [
   { id: 'sentiment', label: 'Sentiment', key: '0', hint: 'Sentiment — every reading as a meter, and their consensus (key 0)' },
   { id: 'signals', label: 'Signals', key: 's', hint: 'Market prediction — trend, strength, R/R checklist, toxicity (key S)' },
   { id: 'insights', label: 'Insights', key: 'i', hint: 'Market insights — auto-generated analysis feed & key levels (key I)' },
-  { id: 'bubbles', label: 'Crypto Bubbles', key: 'c', hint: 'Live interactive Crypto Bubbles market view (key C)' },
   { id: 'guide', label: 'Guide', key: 'g', hint: 'Shortcuts & methodology' },
 ] as const
 
