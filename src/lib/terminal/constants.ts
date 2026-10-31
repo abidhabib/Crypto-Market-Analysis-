@@ -65,6 +65,7 @@ export const TABS = [
   { id: 'sentiment', label: 'Sentiment', key: '0', hint: 'Sentiment — every reading as a meter, and their consensus (key 0)' },
   { id: 'signals', label: 'Signals', key: 's', hint: 'Market prediction — trend, strength, R/R checklist, toxicity (key S)' },
   { id: 'insights', label: 'Insights', key: 'i', hint: 'Market insights — auto-generated analysis feed & key levels (key I)' },
+  { id: 'bubbles', label: 'Crypto Bubbles', key: 'c', hint: 'Live interactive Crypto Bubbles market view (key C)' },
   { id: 'guide', label: 'Guide', key: 'g', hint: 'Shortcuts & methodology' },
 ] as const
 
