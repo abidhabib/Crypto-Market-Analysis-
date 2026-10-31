@@ -53,3 +53,17 @@ The heatmap calculation tests cover historical inspection, liquidity binning, ag
 Market context and displayed analytics are descriptive; they are not validated profitability predictions.
 
 Heatmap navigation: scroll to zoom the time axis, pinch on a trackpad (or Ctrl + wheel) to zoom both axes, Shift + scroll to zoom price, drag to pan, and swipe horizontally to pan time. Zoom stays anchored to the cursor within the recorded history. Navigation holds a snapshot; **Return to live** resumes the feed. Use the chart’s +/− buttons or keyboard +/−, and double-click, press 0/Escape, or use Reset to restore the chart. **Insights** toggles the analysis sidebar. Touch supports drag and two-finger pinch inside the chart.
+
+## Price-aligned heatmap order flow
+
+The Heatmap **Columns** menu adds SuperDOM (`sold | bid | price | ask | bought`), book, size, cumulative depth, volume, delta, cumulative delta, retained-buffer volume profile, sampled quote changes and tape. Presets and reordering keep the selected data next to the chart at matching price coordinates. An expandable HTML ladder exposes row values on mobile. The optional CVD strip covers the selected chart window.
+
+The **Lines** controls provide Plan triggers/manual levels, recorded bid/ask paths, buyer/seller execution VWAP, computed Deribit gamma levels, liquidation scenarios and reported futures-liquidation prints. Gamma is hidden during replay without historical options data; Liq explicitly distinguishes modeled leverage scenarios from real reported events. These are descriptive overlays, not validated predictions or order execution. See the [reference review and methodology](docs/heatmap-reference-review.md).
+
+```sh
+node tests/heatmap-orderflow.test.mjs
+```
+
+## Automatic production deployment
+
+Pushes to `main` build and deploy through [GitHub Actions](.github/workflows/production.yml). UI releases update only the dashboard; backend source changes also update the stream. Builds run on GitHub, with versioned images, local health checks and rollback to the previous image on rollout failure. Production ports, CloudPanel routes and existing PM2 applications remain under their current configuration. See [deployment setup and recovery](deploy/README.md).

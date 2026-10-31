@@ -1,0 +1,111 @@
+name: Production
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deploy_stream:
+        description: Also rebuild/restart the market stream (resets its in-memory history)
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: tradizone-production
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 35
+    steps:
+      - name: Check out release
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate deployment configuration
+        env:
+          PROD_HOST: ${{ vars.PROD_HOST }}
+          PROD_USER: ${{ vars.PROD_USER }}
+          PROD_SSH_PRIVATE_KEY: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+          PROD_KNOWN_HOSTS: ${{ secrets.PROD_KNOWN_HOSTS }}
+        run: |
+          test -n "$PROD_HOST"
+          test -n "$PROD_USER"
+          test -n "$PROD_SSH_PRIVATE_KEY"
+          test -n "$PROD_KNOWN_HOSTS"
+      - name: Verify release rollback and isolation
+        run: python3 tests/production-deploy.test.py
+      - name: Select services
+        id: services
+        env:
+          BEFORE: ${{ github.event.before }}
+          FORCE_STREAM: ${{ inputs.deploy_stream }}
+        run: |
+          mode=dashboard
+          if [ "$FORCE_STREAM" = true ]; then
+            mode=both
+          elif [ -n "$BEFORE" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            if git diff --name-only "$BEFORE" "$GITHUB_SHA" -- mini-services/terminal-stream/ | grep -q .; then
+              mode=both
+            elif git cat-file -e "$BEFORE:deploy/Dockerfile" 2>/dev/null && git diff --name-only "$BEFORE" "$GITHUB_SHA" -- deploy/Dockerfile | grep -q .; then
+              mode=both
+            fi
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+      - name: Set up Docker builder
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Test and build dashboard
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          target: dashboard
+          platforms: linux/amd64
+          load: true
+          tags: tradizone-dashboard:${{ github.sha }}
+          build-args: |
+            NEXT_PUBLIC_STREAM_URL=https://stream.abidhabib.pro
+            APP_REVISION=${{ github.sha }}
+          cache-from: type=gha,scope=dashboard
+          cache-to: type=gha,mode=max,scope=dashboard
+      - name: Build market stream when required
+        if: steps.services.outputs.mode == 'both'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          target: stream
+          platforms: linux/amd64
+          load: true
+          tags: tradizone-stream:${{ github.sha }}
+          build-args: APP_REVISION=${{ github.sha }}
+          cache-from: type=gha,scope=stream
+          cache-to: type=gha,mode=max,scope=stream
+      - name: Package and deploy release
+        env:
+          MODE: ${{ steps.services.outputs.mode }}
+          PROD_HOST: ${{ vars.PROD_HOST }}
+          PROD_USER: ${{ vars.PROD_USER }}
+          PROD_SSH_PRIVATE_KEY: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+          PROD_KNOWN_HOSTS: ${{ secrets.PROD_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          images=("tradizone-dashboard:$GITHUB_SHA")
+          if [ "$MODE" = both ]; then images+=("tradizone-stream:$GITHUB_SHA"); fi
+          docker save "${images[@]}" | gzip -1 > "$RUNNER_TEMP/tradizone-release.tar.gz"
+          key="$RUNNER_TEMP/tradizone-deploy-key"
+          known="$RUNNER_TEMP/tradizone-known-hosts"
+          trap 'rm -f "$key" "$known" "$RUNNER_TEMP/tradizone-release.tar.gz"' EXIT
+          umask 077
+          printf '%s\n' "$PROD_SSH_PRIVATE_KEY" > "$key"
+          printf '%s\n' "$PROD_KNOWN_HOSTS" > "$known"
+          ssh -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known" \
+            -o ConnectTimeout=20 -o ServerAliveInterval=20 \
+            "$PROD_USER@$PROD_HOST" "deploy $GITHUB_SHA $MODE" \
+            < "$RUNNER_TEMP/tradizone-release.tar.gz"
+      - name: Check public dashboard
+        run: curl --fail --silent --show-error --retry 3 --retry-delay 5 --max-time 30 https://crypto.abidhabib.pro/ -o /dev/null

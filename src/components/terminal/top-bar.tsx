@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils'
 import { PanelRight, Activity, ChevronDown } from 'lucide-react'
 
 export default function TopBar({ status }: { status: 'connecting' | 'live' | 'offline' }) {
-  const { symbol, setSymbol, toggleRail, railOpen, setScannerOpen } = useTerminal()
+  const { symbol, setSymbol, toggleRail, railOpen, setScannerOpen, tab } = useTerminal()
   const meta = metaFor(symbol)
 
   useEffect(() => { setStreamSymbol(symbol) }, [symbol])
@@ -79,7 +79,7 @@ export default function TopBar({ status }: { status: 'connecting' | 'live' | 'of
         <span className="hidden font-mono text-[11px] text-muted-foreground md:block">
           {clock ? new Date(clock).toISOString().slice(11, 19) + ' UTC' : '—'}
         </span>
-        <button
+        {tab !== 'heatmap' && <button
           onClick={toggleRail}
           aria-label="Toggle order book rail"
           title="Toggle order book rail (B)"
@@ -87,7 +87,7 @@ export default function TopBar({ status }: { status: 'connecting' | 'live' | 'of
             railOpen ? 'border-[#4da3ff]/50 text-[#4da3ff]' : 'border-border text-muted-foreground')}
         >
           <PanelRight className="size-4" />
-        </button>
+        </button>}
       </div>
     </header>
   )

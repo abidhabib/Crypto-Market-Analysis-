@@ -120,7 +120,7 @@ export function replayFrame(columns: readonly HeatCol[], trades: readonly Trade[
 // Stream columns are immutable snapshots. Reuse their price bins during live
 // polling and replay; new columns and changed bin sizes get fresh calculations.
 const analysisBooks = new WeakMap<HeatCol, { step: number; bid: Map<number, number>; ask: Map<number, number>; threshold: number }>()
-function analysisBook(col: HeatCol, step: number) {
+export function binnedBook(col: HeatCol, step: number) {
   const cached = analysisBooks.get(col)
   if (cached?.step === step) return cached
   const bid = binDepth(col.bids, step), ask = binDepth(col.asks, step)
@@ -146,7 +146,7 @@ export function analyzeHeatmap(columns: readonly HeatCol[], trades: readonly Tra
     const fresh = col.t - (col.sourceAt ?? col.t) <= 5000
     if (breakInBook || !fresh) zones.clear()
     if (!fresh) { previous = col; continue }
-    const current = analysisBook(col, step), threshold = current.threshold
+    const current = binnedBook(col, step), threshold = current.threshold
     const executed = new Map<number, { buy: number; sell: number }>()
     while (tradeIndex < prints.length && prints[tradeIndex].t <= col.t) {
       const tr = prints[tradeIndex++]
@@ -225,7 +225,7 @@ export function analyzeHeatmap(columns: readonly HeatCol[], trades: readonly Tra
     const sell = localized.reduce((n, tr) => n + (tr.m ? tr.p * tr.q : 0), 0)
     const side = buy >= sell ? 'ask' : 'bid', dominant = Math.max(buy, sell)
     if (dominant / (buy + sell) < 0.75) continue
-    const candidates = [...analysisBook(last, step)[side]].filter(([price, usd]) => Math.abs(price - last.mid) <= step * 1.5 && usd >= 25000).sort((a, b) => b[1] - a[1])
+    const candidates = [...binnedBook(last, step)[side]].filter(([price, usd]) => Math.abs(price - last.mid) <= step * 1.5 && usd >= 25000).sort((a, b) => b[1] - a[1])
     const zone = candidates[0]
     if (!zone || dominant < Math.max(50000, zone[1] * 0.5)) continue
     add('absorption', { side, price: zone[0] }, t + 5000, dominant, `Possible ${side} absorption: at least 75% one-sided executed flow over 5s, with no more than 0.75 bin net mid-price movement near resting liquidity. Snapshot heuristic, not proof of a hidden order.`)

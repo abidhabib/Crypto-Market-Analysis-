@@ -1,11 +1,26 @@
-import type { HeatCol, Trade } from './types'
-import { binDepth, bubbleRadius, groupTrades, reactionCodes, reactionColors, type HeatmapReaction, type LiquidityZone } from './heatmap-model'
+import type { Candle, HeatCol, Trade } from './types'
+import { binnedBook, bubbleRadius, groupTrades, reactionCodes, reactionColors, type HeatmapReaction, type LiquidityZone } from './heatmap-model'
+
+import { columnLayout, drawOrderFlowColumns } from './heatmap-columns-renderer'
+import { cumulativeFlow, type HeatmapColumn, type MapLine, type OrderFlow, type recordedLiquidations } from './heatmap-orderflow'
 
 export const BID_COLOR = '#38bdf8'
 export const ASK_COLOR = '#f5b94c'
 export interface HeatmapView {
   width: number; height: number; end: number; span: number; mid: number
   priceCenter?: number
+  selectedColumns?: HeatmapColumn[]
+  flowData?: OrderFlow
+  flowScope?: 'window' | 'recorded'
+  domUnits?: 'usd' | 'coin'
+  tapeMin?: number
+  showCvd?: boolean
+  showQuotes?: boolean
+  candles?: Candle[]
+  lines?: MapLine[]
+  liquidations?: ReturnType<typeof recordedLiquidations>
+  bubbleMode?: 'trades' | 'steps'
+  bubbleInterval?: number
   range: number; step: number; contrast: number; minTrade: number
   bubbleScale: number
   bubbles?: ReturnType<typeof getTradeBubbles>
@@ -17,13 +32,16 @@ export interface HeatmapView {
 }
 
 export function heatmapGeometry(v: HeatmapView) {
-  const left = 12, top = 22, bottom = Math.max(top + 1, v.height - 32)
-  const profile = v.showProfile && v.width >= 560 ? 62 : 0
-  const right = Math.max(left + 1, v.width - 86 - profile)
+  const left = 12, top = 36
+  const cvdHeight = v.showCvd && v.height >= 320 ? 76 : 0
+  const bottom = Math.max(top + 1, v.height - 32 - cvdHeight)
+  const profile = !v.selectedColumns?.length && v.showProfile && v.width >= 560 ? 62 : 0
+  const dataColumns = columnLayout(v.width, v.selectedColumns).width
+  const right = Math.max(left + 1, v.width - 86 - profile - dataColumns)
   const center = v.priceCenter ?? v.mid
   const high = center + v.mid * v.range / 100, low = center - v.mid * v.range / 100
   const start = v.end - v.span
-  return { left, top, bottom, right, profile, high, low, start,
+  return { left, top, bottom, right, profile, cvdHeight, high, low, start,
     x: (t: number) => left + (t - start) / v.span * (right - left),
     y: (p: number) => top + (high - p) / (high - low) * (bottom - top),
   }
@@ -43,9 +61,9 @@ const usd = (v: number) => v >= 1e6 ? `$${(v / 1e6).toFixed(1)}m` : `$${(v / 100
 export function getTradeBubbles(v: HeatmapView) {
   if (v.mid <= 0) return []
   const g = heatmapGeometry(v)
-  const timeStep = Math.max(500, Math.ceil(v.span / Math.max(1, g.right - g.left) * 26 / 500) * 500)
+  const timeStep = v.bubbleInterval || Math.max(500, Math.ceil(v.span / Math.max(1, g.right - g.left) * 26 / 500) * 500)
   const priceStep = v.step * Math.max(1, Math.ceil((g.high - g.low) / Math.max(1, g.bottom - g.top) * 22 / v.step))
-  return groupTrades(v.trades, g.start, v.end, timeStep, priceStep, v.minTrade)
+  return groupTrades(v.trades, g.start, v.end, timeStep, v.bubbleMode === 'steps' ? Number.MAX_VALUE : priceStep, v.minTrade)
     .filter(tr => tr.p >= g.low && tr.p <= g.high)
     .map(tr => ({ ...tr, x: g.x(tr.t), y: g.y(tr.p), r: bubbleRadius(tr.usd, v.bubbleScale) }))
 }
@@ -71,8 +89,13 @@ export function drawHeatmap(ctx: CanvasRenderingContext2D, v: HeatmapView) {
   const g = heatmapGeometry(v), { left, top, bottom, right, profile, x, y, start, high, low } = g
   const visible = v.columns.filter(c => c.t >= start - 3000 && c.t <= v.end)
   const latest = visible[visible.length - 1]
-  const reference = latest ? [...binDepth(latest.bids, v.step).values(), ...binDepth(latest.asks, v.step).values()].sort((a, b) => a - b) : []
+  const reference = latest ? [...binnedBook(latest, v.step).bid.values(), ...binnedBook(latest, v.step).ask.values()].sort((a, b) => a - b) : []
   const ref = reference[Math.floor(reference.length * 0.9)] || 1
+  const gradient = ctx.createLinearGradient(left, 0, left + 80, 0)
+  gradient.addColorStop(0, '#081328'); gradient.addColorStop(0.45, '#104487'); gradient.addColorStop(0.75, '#16a3d3'); gradient.addColorStop(1, '#fff9d6')
+  ctx.fillStyle = gradient; ctx.fillRect(left, 8, 80, 5)
+  ctx.font = '9px ui-monospace, monospace'; ctx.textAlign = 'left'; ctx.fillStyle = '#70839a'
+  ctx.fillText(`Depth USDT · bright ≈ ${usd(ref * (Math.pow(4, 63 / (50 * v.contrast)) - 1) / 3)}`, left, 27)
   ctx.save(); ctx.beginPath(); ctx.rect(left, top, right - left, bottom - top); ctx.clip()
 
   // Timestamp-based sampling keeps a full rolling buffer scrolling correctly.
@@ -85,8 +108,8 @@ export function drawHeatmap(ctx: CanvasRenderingContext2D, v: HeatmapView) {
     const col = samples[i], cx = x(col.t)
     const nextTime = Math.min(samples[i + 1]?.t ?? v.end, col.t + 3000)
     const cw = Math.max(1, x(nextTime) - cx + 0.3)
-    for (const [levels, colors] of [[col.bids, bids], [col.asks, asks]] as const) {
-      for (const [price, notional] of binDepth(levels, v.step)) {
+    for (const [levels, colors] of [[binnedBook(col, v.step).bid, bids], [binnedBook(col, v.step).ask, asks]] as const) {
+      for (const [price, notional] of levels) {
         if (price < low || price > high) continue
         const intensity = Math.min(63, Math.floor(Math.log1p(notional / ref * 3) / Math.log(4) * 50 * v.contrast))
         ctx.fillStyle = colors[intensity]
@@ -105,6 +128,42 @@ export function drawHeatmap(ctx: CanvasRenderingContext2D, v: HeatmapView) {
   for (let i = 0; i <= 4; i++) {
     const cx = left + (right - left) * i / 4
     ctx.beginPath(); ctx.moveTo(cx, top); ctx.lineTo(cx, bottom); ctx.stroke()
+  }
+
+  // Candles and quotes are from the same bounded recording as the heatmap.
+  if (v.candles?.length) {
+    const candleWidth = Math.max(2, Math.min(12, (right - left) / v.span * 45000))
+    for (const c of v.candles) {
+      if (c.t > v.end || c.t + 60000 < start) continue
+      const cx = x(c.t + 30000), up = c.c >= c.o
+      ctx.strokeStyle = up ? '#34d39988' : '#fb718588'; ctx.fillStyle = up ? '#16c78455' : '#ef444455'; ctx.lineWidth = 1
+      ctx.beginPath(); ctx.moveTo(cx, y(c.h)); ctx.lineTo(cx, y(c.l)); ctx.stroke()
+      ctx.fillRect(cx - candleWidth / 2, Math.min(y(c.o), y(c.c)), candleWidth, Math.max(1, Math.abs(y(c.o) - y(c.c))))
+    }
+  }
+  if (v.showQuotes) for (const side of ['bids', 'asks'] as const) {
+    ctx.beginPath(); let previousTime = 0, previousY = 0
+    for (const c of visible) {
+      if (!c[side].length) { previousTime = 0; continue }
+      const p = side === 'bids' ? Math.max(...c.bids.map(l => l.p)) : Math.min(...c.asks.map(l => l.p)), cy = y(p), cx = x(c.t)
+      if (!previousTime || c.t - previousTime > 3000) ctx.moveTo(cx, cy)
+      else { ctx.lineTo(cx, previousY); ctx.lineTo(cx, cy) }
+      previousTime = c.t; previousY = cy
+    }
+    ctx.lineWidth = 1; ctx.strokeStyle = side === 'bids' ? '#34d399aa' : '#fb7185aa'; ctx.stroke()
+  }
+  const lineLabels: number[] = []
+  for (const l of v.lines ?? []) {
+    if (l.price < low || l.price > high) continue
+    const cy = y(l.price)
+    ctx.lineWidth = 1; ctx.strokeStyle = l.color; ctx.globalAlpha = 0.7; ctx.setLineDash(l.kind === 'liq' ? [2, 5] : [6, 4])
+    ctx.beginPath(); ctx.moveTo(left, cy); ctx.lineTo(right, cy); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1
+    if (!lineLabels.some(p => Math.abs(p - cy) < 15)) {
+      const label = `${l.label} ${v.formatPrice(l.price)}`
+      ctx.font = '10px ui-monospace, monospace'; ctx.textAlign = 'left'
+      ctx.fillStyle = '#070c13dd'; ctx.fillRect(left + 2, cy - 15, ctx.measureText(label).width + 8, 14)
+      ctx.fillStyle = l.color; ctx.fillText(label, left + 6, cy - 5); lineLabels.push(cy)
+    }
   }
 
   // Persistence outlines describe observed duration; no extrapolation before recording.
@@ -126,6 +185,7 @@ export function drawHeatmap(ctx: CanvasRenderingContext2D, v: HeatmapView) {
 
   if (v.showTrades) {
     const bubbles = v.bubbles ?? getTradeBubbles(v)
+    const whaleThreshold = Math.max(50000, [...bubbles].sort((a, b) => a.usd - b.usd)[Math.floor(bubbles.length * 0.9)]?.usd ?? Infinity)
     for (const tr of bubbles) {
       const fraction = tr.buy / tr.usd, angle = -Math.PI / 2 + Math.PI * 2 * fraction
       ctx.shadowBlur = 3; ctx.shadowColor = tr.buy >= tr.sell ? '#22c55e55' : '#ef444455'
@@ -142,6 +202,7 @@ export function drawHeatmap(ctx: CanvasRenderingContext2D, v: HeatmapView) {
         ctx.strokeStyle = edge; ctx.lineWidth = 1.5; ctx.stroke()
       }
     }
+    for (const tr of bubbles) if (tr.usd >= whaleThreshold) { ctx.beginPath(); ctx.arc(tr.x, tr.y, tr.r + 3.5, 0, Math.PI * 2); ctx.strokeStyle = '#facc15'; ctx.lineWidth = 1.5; ctx.stroke() }
     // Label only the largest clusters and avoid colliding labels.
     const labels: { x: number; y: number; w: number }[] = []
     ctx.font = '600 11px ui-monospace, monospace'; ctx.textAlign = 'center'
@@ -164,14 +225,20 @@ export function drawHeatmap(ctx: CanvasRenderingContext2D, v: HeatmapView) {
     else ctx.lineTo(x(col.t), y(col.mid))
     previous = col.t
   }
-  ctx.strokeStyle = '#08101b'; ctx.lineWidth = 4; ctx.stroke()
-  ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 1.7; ctx.stroke()
+  ctx.strokeStyle = '#08101b'; ctx.lineWidth = v.showQuotes ? 1.5 : 4; ctx.stroke()
+  ctx.strokeStyle = v.showQuotes ? '#e2e8f055' : '#e2e8f0'; ctx.lineWidth = v.showQuotes ? 0.75 : 1.7; ctx.stroke()
   const midY = y(v.mid)
   ctx.setLineDash([4, 5]); ctx.strokeStyle = '#e2e8f04d'; ctx.lineWidth = 1
   ctx.beginPath(); ctx.moveTo(left, midY); ctx.lineTo(right, midY); ctx.stroke(); ctx.setLineDash([])
   if (latest) {
     ctx.beginPath(); ctx.arc(Math.min(right, x(latest.t)), y(latest.mid), 3, 0, Math.PI * 2)
     ctx.fillStyle = '#f8fafc'; ctx.fill()
+  }
+  for (const l of v.liquidations ?? []) {
+    if (l.p < low || l.p > high) continue
+    const cx = x(l.t), cy = y(l.p), r = Math.min(10, Math.max(4, Math.sqrt(l.usd / 10000) * 3))
+    ctx.beginPath(); ctx.moveTo(cx, cy - r); ctx.lineTo(cx + r, cy); ctx.lineTo(cx, cy + r); ctx.lineTo(cx - r, cy); ctx.closePath()
+    ctx.fillStyle = '#f472b6aa'; ctx.strokeStyle = '#fbcfe8'; ctx.lineWidth = 1; ctx.fill(); ctx.stroke()
   }
   for (const e of getReactionMarkers(v)) {
     const color = reactionColors[e.kind]
@@ -192,6 +259,14 @@ export function drawHeatmap(ctx: CanvasRenderingContext2D, v: HeatmapView) {
     ctx.font = '600 10px ui-monospace, monospace'; ctx.fillStyle = '#0f172a'
     ctx.fillText(v.formatPrice(v.mid), right + 10, midY + 3)
   }
+  const tagged: number[] = [midY]
+  for (const l of v.lines ?? []) {
+    const cy = y(l.price)
+    if (l.price < low || l.price > high || tagged.some(p => Math.abs(p - cy) < 18)) continue
+    ctx.fillStyle = l.color; ctx.fillRect(right + 4, cy - 8, 78, 16)
+    ctx.font = '10px ui-monospace, monospace'; ctx.textAlign = 'left'; ctx.fillStyle = '#07111c'
+    ctx.fillText(v.formatPrice(l.price), right + 10, cy + 3); tagged.push(cy)
+  }
   ctx.font = '10px ui-monospace, monospace'
   const clock = (t: number) => new Date(t).toISOString().slice(11, 19)
   for (let i = 0; i <= 4; i++) {
@@ -201,7 +276,7 @@ export function drawHeatmap(ctx: CanvasRenderingContext2D, v: HeatmapView) {
   if (profile && latest) {
     const bx = right + 86
     ctx.fillStyle = '#0d1522'; ctx.fillRect(bx, top, profile, bottom - top)
-    const binned = [binDepth(latest.bids, v.step), binDepth(latest.asks, v.step)]
+    const binned = [binnedBook(latest, v.step).bid, binnedBook(latest, v.step).ask]
     const max = Math.max(1, ...binned.flatMap(m => [...m].filter(([p]) => p >= low && p <= high).map(([, n]) => n)))
     for (let side = 0; side < 2; side++) for (const [p, n] of binned[side]) {
       if (p < low || p > high) continue
@@ -212,18 +287,37 @@ export function drawHeatmap(ctx: CanvasRenderingContext2D, v: HeatmapView) {
     ctx.fillText('DEPTH', bx + 4, 13)
     ctx.fillText(usd(max), bx + 3, h - 12)
   }
+  if (v.flowData) drawOrderFlowColumns(ctx, v, v.flowData, g)
+  if (g.cvdHeight) {
+    const series = cumulativeFlow(v.trades, start, v.end, Math.max(1000, v.span / 120))
+    const yTop = bottom + 16, yBottom = h - 34, middle = (yTop + yBottom) / 2
+    ctx.fillStyle = '#080f18'; ctx.fillRect(left, yTop - 8, right - left, yBottom - yTop + 9)
+    ctx.font = '9px ui-monospace, monospace'; ctx.textAlign = 'left'; ctx.fillStyle = '#8392a8'; ctx.fillText('CVD · chart-window buy − sell', left + 4, yTop)
+    const maxDelta = Math.max(1, ...series.map(s => Math.abs(s.delta))), maxCvd = Math.max(1, ...series.map(s => Math.abs(s.cvd)))
+    ctx.strokeStyle = '#ffffff16'; ctx.beginPath(); ctx.moveTo(left, middle); ctx.lineTo(right, middle); ctx.stroke()
+    for (const s of series) { const bh = s.delta / maxDelta * 16; ctx.fillStyle = s.delta >= 0 ? '#16c78466' : '#ef444466'; ctx.fillRect(x(s.t), Math.min(middle, middle - bh), Math.max(1, (right - left) / 125), Math.abs(bh)) }
+    ctx.beginPath(); series.forEach((s, i) => { const cy = middle - s.cvd / maxCvd * (yBottom - yTop) * 0.35; if (!i) ctx.moveTo(x(s.t), cy); else ctx.lineTo(x(s.t), cy) })
+    ctx.strokeStyle = '#7dd3fc'; ctx.lineWidth = 1.3; ctx.stroke()
+  }
+
 }
 
 /** Cheap cursor overlay: called without rebuilding the liquidity raster. */
 export function drawHeatmapCursor(ctx: CanvasRenderingContext2D, v: HeatmapView) {
   const p = v.pointer, g = heatmapGeometry(v)
-  if (!p || v.mid <= 0 || p.x < g.left || p.x > g.right || p.y < g.top || p.y > g.bottom) return
+  const activeColumn = p ? columnLayout(v.width, v.selectedColumns).shown.find(c => p.x >= g.right + 86 + c.offset && p.x <= g.right + 86 + c.offset + c.width && c.id !== 'tape') : null
+  if (!p || v.mid <= 0 || p.x < g.left || (p.x > g.right && !activeColumn) || p.y < g.top || p.y > g.bottom) return
   ctx.save()
   ctx.lineWidth = 1; ctx.strokeStyle = '#cbd5e17a'; ctx.setLineDash([3, 4])
-  ctx.beginPath(); ctx.moveTo(p.x, g.top); ctx.lineTo(p.x, g.bottom)
-  ctx.moveTo(g.left, p.y); ctx.lineTo(g.right, p.y); ctx.stroke(); ctx.setLineDash([])
+  ctx.beginPath()
+  if (p.x <= g.right) { ctx.moveTo(p.x, g.top); ctx.lineTo(p.x, g.bottom) }
+  ctx.moveTo(g.left, p.y); ctx.lineTo(g.right, p.y)
+  for (const c of columnLayout(v.width, v.selectedColumns).shown) if (c.id !== 'tape') {
+    ctx.moveTo(g.right + 86 + c.offset, p.y); ctx.lineTo(g.right + 86 + c.offset + c.width, p.y)
+  }
+  ctx.stroke(); ctx.setLineDash([])
   const price = g.high - (p.y - g.top) / (g.bottom - g.top) * (g.high - g.low)
-  const t = g.start + (p.x - g.left) / (g.right - g.left) * v.span
+  const t = activeColumn ? v.end : g.start + (p.x - g.left) / (g.right - g.left) * v.span
   ctx.font = '10px ui-monospace, monospace'
   ctx.fillStyle = '#cbd5e1'; ctx.fillRect(g.right + 4, p.y - 9, 78, 18)
   ctx.fillStyle = '#0b1220'; ctx.textAlign = 'left'; ctx.fillText(v.formatPrice(price), g.right + 10, p.y + 3)

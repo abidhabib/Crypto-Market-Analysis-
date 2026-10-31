@@ -1,0 +1,16 @@
+.git
+node_modules
+.next
+.env
+.env.*
+db
+*.log
+*.tar
+*.tar.gz
+*.zip
+local-*
+how to use HeatMap.txt
+.agents
+.codex
+.aws
+tool-results

@@ -29,15 +29,16 @@ export function useHeatmapNavigation(canvas: React.RefObject<HTMLCanvasElement |
     }
     const wheel = (e: WheelEvent) => {
       const p = point(e), c = current.current, g = c.plot
-      if (!within(p) || c.bounds.mid <= 0) return
+      const onPriceAxis = p.x > g.right && p.x <= g.right + 86 && p.y >= g.top && p.y <= g.bottom
+      if ((!within(p) && !onPriceAxis) || c.bounds.mid <= 0) return
       e.preventDefault()
       const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? el.clientHeight : 1
       const v = queued ?? c.viewport
-      if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && !e.ctrlKey && !e.metaKey) {
+      if (!onPriceAxis && Math.abs(e.deltaX) > Math.abs(e.deltaY) && !e.ctrlKey && !e.metaKey) {
         commit(panViewport(v, c.bounds, -e.deltaX * unit / (g.right - g.left), 0))
       } else {
         const factor = Math.exp(Math.max(-0.35, Math.min(0.35, e.deltaY * unit * (e.ctrlKey ? 0.012 : 0.003))))
-        commit(zoomViewport(v, c.bounds, factor, (p.x - g.left) / (g.right - g.left), (p.y - g.top) / (g.bottom - g.top), e.shiftKey ? 'price' : e.ctrlKey || e.metaKey ? 'both' : 'time'))
+        commit(zoomViewport(v, c.bounds, factor, (p.x - g.left) / (g.right - g.left), (p.y - g.top) / (g.bottom - g.top), e.shiftKey || onPriceAxis ? 'price' : e.ctrlKey || e.metaKey ? 'both' : 'time'))
       }
     }
     const down = (e: PointerEvent) => {
