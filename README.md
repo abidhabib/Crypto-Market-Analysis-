@@ -64,6 +64,17 @@ The **Lines** controls provide Plan triggers/manual levels, recorded bid/ask pat
 node tests/heatmap-orderflow.test.mjs
 ```
 
+## Whales: measured large executions
+
+The **Whales** tab overlays sized execution bubbles on candles, with EMA20/50, separate buyer/seller VWAP, traded zones, a price-aligned buy/sell profile, recorded volume and large-versus-other net flow. Sweep, Aggressive, Level and Big print have distinct, documented grouping rules. Automatic sizing uses observed candidate sizes; manual thresholds, display limits, hover/tap inspection, pause, shared/independent timeframes, and trackpad/touch navigation are available.
+
+History loads progressively up to 40,000 aggregate trades, deduplicates exchange IDs and marks missing coverage. Totals include every qualifying recorded execution even if fewer bubbles are drawn. These are exchange executions, not identified whale wallets or verified entire orders. See the [Whales reference review and methodology](docs/whales-reference-review.md).
+
+```sh
+node --experimental-strip-types tests/whales-model.test.mjs
+node --experimental-strip-types tests/whales-history.test.mjs
+```
+
 ## Automatic production deployment
 
 Pushes to `main` build and deploy through [GitHub Actions](.github/workflows/production.yml). UI releases update only the dashboard; backend source changes also update the stream. Builds run on GitHub, with versioned images, local health checks and rollback to the previous image on rollout failure. Production ports, CloudPanel routes and existing PM2 applications remain under their current configuration. See [deployment setup and recovery](deploy/README.md).

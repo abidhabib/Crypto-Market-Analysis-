@@ -44,7 +44,7 @@ function ActivePanel({ tab }: { tab: TabId }) {
   }
 }
 
-const RAIL_TABS = new Set<TabId>(['chart', 'footprint', 'whales', 'profile', 'tape', 'l3', 'signals'])
+const RAIL_TABS = new Set<TabId>(['chart', 'footprint', 'profile', 'tape', 'l3', 'signals'])
 
 export default function Terminal() {
   const { tab, setTab, railOpen, toggleRail } = useTerminal()
@@ -58,7 +58,7 @@ export default function Terminal() {
   useHotkeys((key) => {
     const t = TABS.find((x) => x.key === key)
     if (t) setTab(t.id)
-    else if (key === 'b' && tab !== 'heatmap') toggleRail()
+    else if (key === 'b' && tab !== 'heatmap' && tab !== 'whales') toggleRail()
   })
 
   const showRail = railOpen && RAIL_TABS.has(tab)
@@ -79,7 +79,7 @@ export default function Terminal() {
       </main>
       <MarketPicker />
       <footer className="flex h-6 shrink-0 items-center gap-3 overflow-x-auto border-t border-border/60 bg-[#0d1017] px-3 text-[10px] text-muted-foreground" role="contentinfo">
-        <span>keys: <kbd className="rounded bg-muted px-1 font-mono">1–9,0</kbd> tabs · <kbd className="rounded bg-muted px-1 font-mono">G</kbd> guide · {tab === 'heatmap' ? 'Columns menu: aligned book & tape' : <><kbd className="rounded bg-muted px-1 font-mono">B</kbd> book rail</>}</span>
+        <span>keys: <kbd className="rounded bg-muted px-1 font-mono">1–9,0</kbd> tabs · <kbd className="rounded bg-muted px-1 font-mono">G</kbd> guide · {tab === 'heatmap' ? 'Columns menu: aligned book & tape' : tab === 'whales' ? 'Whales: hover / tap bubbles · Home: live' : <><kbd className="rounded bg-muted px-1 font-mono">B</kbd> book rail</>}</span>
         <span className="hidden sm:inline">sources: Binance spot & futures · Deribit · alternative.me</span>
         <span className="ml-auto hidden shrink-0 xl:inline">estimates: liquidation map, L3-style events — see Guide</span>
       </footer>

@@ -5,6 +5,14 @@ const b = { earliest: 0, latest: 1000000, mid: 100 }
 const v = { end: 800000, span: 120000, center: 100, halfRange: 0.3 }
 const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-8, `${a} != ${b}`)
 
+test('Whales can use longer history bounds without changing Heatmap defaults', () => {
+  const bounds = { earliest: 0, latest: 86400000, mid: 100, minSpan: 60000, maxSpan: 86400000, minCenter: 1, maxCenter: 300, minHalfRange: 0.01, maxHalfRange: 100 }
+  const whales = constrainViewport({ end: 80000000, span: 7200000, center: 120, halfRange: 10 }, bounds)
+  assert.equal(whales.span, 7200000); assert.equal(whales.halfRange, 10)
+  const defaultMap = constrainViewport({ end: 800000, span: 7200000, center: 120, halfRange: 10 }, b)
+  assert.equal(defaultMap.span, 600000); assert.equal(defaultMap.halfRange, 2)
+})
+
 test('cursor anchored zoom preserves the inspected time and price', () => {
   const x = 0.32, y = 0.71
   const next = zoomViewport(v, b, 0.7, x, y)

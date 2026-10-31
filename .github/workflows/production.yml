@@ -38,6 +38,14 @@ jobs:
           test -n "$PROD_KNOWN_HOSTS"
       - name: Verify release rollback and isolation
         run: python3 tests/production-deploy.test.py
+      - name: Set up test runtime
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - name: Verify whale executions and history
+        run: |
+          node --experimental-strip-types tests/whales-model.test.mjs
+          node --experimental-strip-types tests/whales-history.test.mjs
       - name: Select services
         id: services
         env:

@@ -56,7 +56,7 @@ export const TABS = [
   { id: 'chart', label: 'Chart', key: '1', hint: 'Pro chart — indicators and drawing tools (key 1)' },
   { id: 'heatmap', label: 'Heatmap', key: '2', hint: 'Liquidity heatmap — depth, trade bubbles, spoof detection (key 2)' },
   { id: 'footprint', label: 'Footprint', key: '3', hint: 'Footprint (key 3)' },
-  { id: 'whales', label: 'Whales', key: '4', hint: 'Whale candles (key 4)' },
+  { id: 'whales', label: 'Whales', key: '4', hint: 'Large execution bubbles, buyer/seller VWAP, zones and net flow (key 4)' },
   { id: 'profile', label: 'Vol profile', key: '5', hint: 'Volume profile (key 5)' },
   { id: 'gamma', label: 'Gamma', key: '6', hint: 'Gamma levels — options walls, zero-gamma flip, max pain (key 6)' },
   { id: 'tape', label: 'Tape', key: '7', hint: 'Time & sales (key 7)' },
