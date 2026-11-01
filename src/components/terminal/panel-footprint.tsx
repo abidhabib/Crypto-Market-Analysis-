@@ -1,255 +1,134 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ChevronLeft, ChevronRight, CircleHelp, Pause, Play, Settings2 } from 'lucide-react'
 import { useTerminal } from '@/lib/terminal/store'
-import { getStream, now } from '@/lib/terminal/stream-client'
-import { usePoll, useRaf, useCanvasSize } from '@/lib/terminal/hooks'
-import { symbolMeta, GREEN, RED, TEXT_DIM } from '@/lib/terminal/constants'
-import { fmtCompact, fmtTime, fmtUsd } from '@/lib/terminal/format'
-import { PanelHeader, StatCard } from './panel-kit'
+import { metaFor } from '@/lib/terminal/constants'
+import { fmtCompact, fmtPrice } from '@/lib/terminal/format'
+import { buildFootprint, footprintReading, type FootprintBar, type FootprintRow } from '@/lib/terminal/footprint-model'
+import { useFootprintData } from '@/lib/terminal/use-footprint-data'
 import { cn } from '@/lib/utils'
-import type { Trade } from '@/lib/terminal/types'
 
-const BG = '#0b0d12'
-
-interface FpBucket { buy: number; sell: number }
-interface FpCandle { t: number; o: number; h: number; l: number; c: number; rows: Map<number, FpBucket>; delta: number }
-
-function buildFootprint(trades: Trade[], tfMs: number, rowsPerCandle: number): FpCandle[] {
-  if (!trades.length) return []
-  const candles = new Map<number, FpCandle>()
-  let minP = Infinity, maxP = 0
-  for (const tr of trades) {
-    const b = Math.floor(tr.t / tfMs) * tfMs
-    let c = candles.get(b)
-    if (!c) {
-      c = { t: b, o: tr.p, h: tr.p, l: tr.p, c: tr.p, rows: new Map(), delta: 0 }
-      candles.set(b, c)
-    }
-    c.h = Math.max(c.h, tr.p)
-    c.l = Math.min(c.l, tr.p)
-    c.c = tr.p
-    const row = c.rows.get(tr.p) ?? { buy: 0, sell: 0 }
-    // m=true → buyer is maker → aggressor was a seller (hit the bid)
-    if (tr.m) row.sell += tr.q
-    else row.buy += tr.q
-    c.rows.set(tr.p, row)
-    c.delta += tr.m ? -tr.q : tr.q
-    if (tr.p < minP) minP = tr.p
-    if (tr.p > maxP) maxP = tr.p
-  }
-  const out = [...candles.values()].sort((a, b) => a.t - b.t)
-  const range = maxP - minP
-  const binSize = Math.max((range / (rowsPerCandle * out.length)) * 1.2, ((maxP + minP) / 2) * 0.00002)
-  for (const c of out) {
-    const binned = new Map<number, FpBucket>()
-    for (const [p, v] of c.rows) {
-      const k = Math.round(p / binSize) * binSize
-      const cur = binned.get(k) ?? { buy: 0, sell: 0 }
-      cur.buy += v.buy
-      cur.sell += v.sell
-      binned.set(k, cur)
-    }
-    c.rows = binned
-  }
-  return out
-}
+const control = 'inline-flex min-h-8 items-center justify-center gap-1 rounded border border-white/10 bg-[#191919] px-2 text-[11px] text-neutral-300 outline-none hover:bg-neutral-800 focus-visible:ring-1 focus-visible:ring-amber-400 disabled:opacity-30'
+const utc = (t: number) => new Date(t).toISOString().slice(11, 19)
+const volume = (n: number) => n === 0 ? '0' : Math.abs(n) < 0.01 ? n.toPrecision(2) : fmtCompact(n)
+const signed = (n: number) => `${n > 0 ? '+' : ''}${volume(n)}`
 
 export default function FootprintPanel() {
-  const { symbol } = useTerminal()
-  const meta = symbolMeta(symbol)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const size = useCanvasSize(canvasRef)
-  const [tf, setTf] = useState(60_000)
-  const [rowsPerCandle, setRows] = useState(9)
-  const [imb, setImb] = useState(3)
-  const [backfill, setBackfill] = useState<Trade[]>([])
-  const [bfState, setBfState] = useState<'idle' | 'loading' | 'ok' | 'err'>('idle')
-  const [bfWindow, setBfWindow] = useState<{ from: number | null; to: number | null }>({ from: null, to: null })
+  const symbol = useTerminal(s => s.symbol)
+  return <FootprintWorkspace key={symbol} symbol={symbol} />
+}
 
+function FootprintWorkspace({ symbol }: { symbol: string }) {
+  const { data, history, loadMore } = useFootprintData(symbol)
+  const [frozen, setFrozen] = useState<typeof data | null>(null)
+  const feed = frozen ?? data
+  const meta = metaFor(symbol, feed.trades.at(-1)?.p)
+  const baseTicks = Math.max(1, Math.round(meta.bin / meta.tick))
+  const [rowTicks, setRowTicks] = useState(baseTicks)
+  const [interval, setIntervalMs] = useState(60000)
+  const [ratio, setRatio] = useState(3)
+  const [minQty, setMinQty] = useState(0)
+  const [units, setUnits] = useState<'coin' | 'usd'>('coin')
+  const [offset, setOffset] = useState(0)
+  const [selectedTime, setSelectedTime] = useState<number | null>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const all = useMemo(() => buildFootprint(feed.trades, { interval, tick: meta.tick, rowTicks, ratio, minQty, end: feed.asOf }), [feed.trades, feed.asOf, interval, meta.tick, rowTicks, ratio, minQty])
+  const endIndex = Math.max(0, all.length - offset)
+  const bars = all.slice(Math.max(0, endIndex - 6), endIndex)
+  const lastVisibleTime = bars.at(-1)?.t
   useEffect(() => {
-    let alive = true
-    fetch(`/api/footprint-history?symbol=${symbol}&pages=8`, { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((j) => {
-        if (!alive) return
-        if (j.trades) {
-          setBackfill(j.trades.map((t: number[]) => ({ a: t[0], p: t[1], q: t[2], t: t[3], m: t[4] })))
-          setBfWindow({ from: j.from, to: j.to })
-          setBfState('ok')
-        } else setBfState('err')
-      })
-      .catch(() => { if (alive) setBfState('err') })
-    return () => { alive = false }
-  }, [symbol])
-
-  const merged = usePoll<Trade[]>(() => {
-    const live = getStream().trades
-    if (!backfill.length) return live
-    if (!live.length) return backfill
-    const lastId = backfill[backfill.length - 1].a
-    const extra = live.filter((t) => t.a > lastId)
-    return extra.length ? [...backfill, ...extra] : backfill
-  }, 500)
-
-  const stats = usePoll(() => {
-    const all = merged
-    const cutoff = now() - tf * 80
-    let delta = 0, buy = 0, sell = 0, n = 0
-    const seen = new Set<number>()
-    for (const t of all) {
-      if (t.t < cutoff) continue
-      delta += t.m ? -t.q : t.q
-      if (t.m) sell += t.q * t.p
-      else buy += t.q * t.p
-      const b = Math.floor(t.t / tf) * tf
-      seen.add(b)
-      n++
-    }
-    return { delta, buy, sell, candles: seen.size }
-  }, 700)
-
-  function draw() {
-    const el = canvasRef.current
-    if (!el || size.w === 0) return
-    const ctx = el.getContext('2d')
-    if (!ctx) return
-    const W = size.w, H = size.h
-    ctx.clearRect(0, 0, W, H)
-    ctx.fillStyle = BG
-    ctx.fillRect(0, 0, W, H)
-
-    const cutoff = now() - tf * 80
-    const fp = buildFootprint(merged.filter((t) => t.t >= cutoff), tf, rowsPerCandle)
-    if (!fp.length) {
-      ctx.fillStyle = TEXT_DIM
-      ctx.font = '12px ui-monospace, monospace'
-      ctx.textAlign = 'center'
-      ctx.fillText('waiting for trades…', W / 2, H / 2)
-      return
-    }
-
-    const headH = 20, deltaH = 16
-    const axisW = 70
-    const plotW = W - axisW, plotH = H - headH - deltaH
-    const show = fp.slice(-Math.max(3, Math.floor(plotW / 74)))
-    const colW = plotW / show.length
-
-    let pMin = Infinity, pMax = 0, maxRowQ = 0.0001
-    for (const c of show) {
-      pMin = Math.min(pMin, c.l)
-      pMax = Math.max(pMax, c.h)
-      for (const v of c.rows.values()) maxRowQ = Math.max(maxRowQ, v.buy + v.sell)
-    }
-    const pad = (pMax - pMin) * 0.04 || pMax * 0.0006
-    pMin -= pad
-    pMax += pad
-    const p2y = (p: number) => headH + ((pMax - p) / (pMax - pMin)) * plotH
-    const rowH = plotH / rowsPerCandle
-
-    ctx.font = '10px ui-monospace, monospace'
-    ctx.textAlign = 'center'
-    for (let i = 0; i < show.length; i++) {
-      ctx.fillStyle = show[i].c >= show[i].o ? GREEN : RED
-      ctx.fillText(fmtTime(show[i].t, false), i * colW + colW / 2, 13)
-    }
-    ctx.textAlign = 'right'
-    ctx.fillStyle = TEXT_DIM
-    for (let i = 0; i <= rowsPerCandle; i++) {
-      const p = pMax - ((pMax - pMin) * i) / rowsPerCandle
-      ctx.fillText(fmtPriceLocal(p, meta.tick), axisW - 6, p2y(p) + 3)
-      ctx.strokeStyle = '#151922'
-      ctx.beginPath(); ctx.moveTo(axisW, p2y(p)); ctx.lineTo(W, p2y(p)); ctx.stroke()
-    }
-
-    ctx.textAlign = 'center'
-    for (let i = 0; i < show.length; i++) {
-      const c = show[i]
-      const x = i * colW + axisW
-      let pocKey: number | null = null, pocTot = 0
-      for (const [p, v] of c.rows) {
-        const tot = v.buy + v.sell
-        if (tot > pocTot) { pocTot = tot; pocKey = p }
-      }
-      const keys = [...c.rows.keys()].sort((a, b) => b - a)
-      for (const p of keys) {
-        const v = c.rows.get(p)!
-        const y = p2y(p)
-        const tot = v.buy + v.sell
-        const inten = Math.min(0.85, 0.12 + 0.73 * (tot / maxRowQ))
-        const binStep = keys.length > 1 ? keys[0] - keys[1] : 0
-        const lower = binStep ? c.rows.get(p - binStep) : undefined
-        const buyImb = lower && v.buy > 0 && lower.sell > 0 && v.buy >= imb * lower.sell
-        const sellImb = lower && lower.buy > 0 && v.sell > 0 && lower.buy >= imb * v.sell
-        const isPoc = p === pocKey
-        ctx.fillStyle = isPoc ? 'rgba(240,185,11,0.14)' : 'rgba(255,255,255,0.02)'
-        ctx.fillRect(x + 1, y - rowH / 2 + 1, colW - 2, Math.max(9, rowH - 2))
-        if (buyImb) { ctx.fillStyle = 'rgba(22,199,132,0.30)'; ctx.fillRect(x + 1, y - rowH / 2 + 1, colW / 2 - 1, Math.max(9, rowH - 2)) }
-        if (sellImb) { ctx.fillStyle = 'rgba(234,57,67,0.30)'; ctx.fillRect(x + colW / 2, y - rowH / 2 + 1, colW / 2 - 1, Math.max(9, rowH - 2)) }
-        const fracB = v.buy / Math.max(v.buy, v.sell, 0.0001)
-        const fracS = v.sell / Math.max(v.buy, v.sell, 0.0001)
-        ctx.fillStyle = `rgba(22,199,132,${inten})`
-        ctx.fillRect(x + 1, y - rowH / 2 + 1, Math.max(2, (colW / 2 - 2) * fracB), Math.max(9, rowH - 2))
-        ctx.fillStyle = `rgba(234,57,67,${inten})`
-        ctx.fillRect(x + colW / 2 + (colW / 2 - 2) * (1 - fracS), y - rowH / 2 + 1, Math.max(2, (colW / 2 - 2) * fracS), Math.max(9, rowH - 2))
-        ctx.font = `${isPoc ? 'bold ' : ''}8.5px ui-monospace, monospace`
-        ctx.fillStyle = '#dfe4ee'
-        ctx.fillText(fmtCompact(v.buy), x + colW * 0.27, y - 1)
-        ctx.fillText(fmtCompact(v.sell), x + colW * 0.74, y - 1)
-      }
-      ctx.font = 'bold 9px ui-monospace, monospace'
-      ctx.fillStyle = c.delta >= 0 ? GREEN : RED
-      ctx.fillText(`Δ ${fmtCompact(c.delta)}`, x + colW / 2, H - 4)
-    }
+    const el = scrollRef.current
+    if (offset || !el) return
+    const follow = () => { el.scrollLeft = el.scrollWidth }
+    follow()
+    const observer = new ResizeObserver(follow)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [lastVisibleTime, offset])
+  const selected = bars.find(b => b.t === selectedTime) ?? [...bars].reverse().find(b => !b.forming) ?? bars.at(-1)
+  const reading = footprintReading(selected)
+  const step = rowTicks * meta.tick
+  const indexes = bars.flatMap(b => [...b.rows.keys()])
+  const low = indexes.length ? Math.min(...indexes) : 0, high = indexes.length ? Math.max(...indexes) : 0
+  const rowCount = indexes.length ? high - low + 1 : 0
+  const rows = rowCount <= 160 ? Array.from({ length: rowCount }, (_, i) => high - i) : []
+  const totals = bars.reduce((v, b) => ({ buy: v.buy + b.buy, sell: v.sell + b.sell, usd: v.usd + b.buyUsd + b.sellUsd, count: v.count + b.count }), { buy: 0, sell: 0, usd: 0, count: 0 })
+  const live = !frozen && feed.status === 'live' && feed.receivedAt > 0 && feed.clientNow - feed.receivedAt < 15000
+  const next = selected && all.find(b => b.t === selected.end)
+  const previous = selected && all.find(b => b.end === selected.t)
+  const followThrough = selected?.complete && next?.complete ? next.c > selected.h ? 'Next candle closed above this high' : next.c < selected.l ? 'Next candle closed below this low' : 'Next candle closed inside this range' : 'Next closed candle not available'
+  const tone = reading.tone === 'buy' ? 'text-emerald-400' : reading.tone === 'sell' ? 'text-rose-400' : reading.tone === 'caution' ? 'text-amber-300' : 'text-neutral-300'
+  const amount = (row: FootprintRow | undefined, side: 'buy' | 'sell') => row ? volume(units === 'usd' ? row[side === 'buy' ? 'buyUsd' : 'sellUsd'] : row[side]) : '·'
+  const changeView = (delta: number) => {
+    if (delta > 0 && !frozen) setFrozen({ ...data, trades: data.trades.slice() })
+    setOffset(Math.max(0, Math.min(Math.max(0, all.length - 1), offset + delta))); setSelectedTime(null)
   }
 
-  useRaf(draw, true, 300)
-
-  return (
-    <div className="flex h-full flex-col min-h-0" data-testid="panel-footprint">
-      <PanelHeader
-        title="Footprint"
-        sub="Bid×ask volume per price level · bold row = POC · shaded half = ≥imb× diagonal imbalance · Δ = candle delta"
-        source="Binance aggTrades"
-        right={
-          <div className="flex flex-wrap items-center gap-1">
-            {[[15_000, '15s'], [60_000, '1m'], [300_000, '5m'], [900_000, '15m']].map(([v, l]) => (
-              <button key={l} onClick={() => setTf(v as number)}
-                className={cn('rounded border px-1.5 py-1 text-[10px]', tf === v ? 'border-[#4da3ff]/60 bg-[#4da3ff]/15 text-[#4da3ff]' : 'border-border text-muted-foreground hover:text-foreground')}>
-                {l}
-              </button>
-            ))}
-            <span className="mx-1 text-[10px] text-muted-foreground">rows</span>
-            {[6, 9, 12].map((r) => (
-              <button key={r} onClick={() => setRows(r)}
-                className={cn('rounded border px-1.5 py-1 text-[10px]', rowsPerCandle === r ? 'border-[#4da3ff]/60 bg-[#4da3ff]/15 text-[#4da3ff]' : 'border-border text-muted-foreground hover:text-foreground')}>
-                {r}
-              </button>
-            ))}
-            <span className="mx-1 text-[10px] text-muted-foreground">imb</span>
-            {[2, 3, 4].map((r) => (
-              <button key={r} onClick={() => setImb(r)}
-                className={cn('rounded border px-1.5 py-1 text-[10px]', imb === r ? 'border-[#4da3ff]/60 bg-[#4da3ff]/15 text-[#4da3ff]' : 'border-border text-muted-foreground hover:text-foreground')}>
-                {r}×
-              </button>
-            ))}
-          </div>
-        }
-      />
-      <div className="grid grid-cols-2 gap-2 border-b border-border/60 px-3 py-2 sm:grid-cols-4">
-        <StatCard label={`Window (${fmtTime(bfWindow.from, false)}–${fmtTime(bfWindow.to, false)})`} value={`${stats.candles} candles`} sub={bfState === 'ok' ? 'history + live' : bfState === 'loading' ? 'loading history…' : 'live only'} />
-        <StatCard label="Window delta" value={fmtCompact(stats.delta)} tone={stats.delta >= 0 ? 'up' : 'down'} />
-        <StatCard label="Aggressive buys" value={fmtUsd(stats.buy)} tone="up" />
-        <StatCard label="Aggressive sells" value={fmtUsd(stats.sell)} tone="down" />
-      </div>
-      <div className="min-h-0 flex-1">
-        <canvas ref={canvasRef} className="block h-full w-full" />
-      </div>
+  return <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-[#0c0c0c] text-neutral-200" data-testid="panel-footprint">
+    <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-white/10 px-3 py-2">
+      <div><h1 className="text-sm font-semibold">Footprint <span className="ml-2 text-[10px] font-normal text-neutral-500">{meta.label} · spot</span></h1><p className="mt-1 text-[10px] text-neutral-500"><span className="text-rose-400">Sell at bid</span> × <span className="text-emerald-400">Buy at ask</span> · executed volume</p></div>
+      <span role="status" className={cn('rounded border px-2 py-1 text-[10px]', live ? 'border-emerald-500/20 text-emerald-400' : 'border-amber-400/20 text-amber-300')}>{frozen ? offset ? 'Historical snapshot' : 'Paused snapshot' : live ? 'Live executions' : 'Waiting for fresh trades'}</span>
     </div>
-  )
+    <div className="relative flex shrink-0 flex-wrap items-center gap-2 border-b border-white/[0.08] px-3 py-2">
+      <div role="group" aria-label="Footprint interval" className="flex gap-0.5 rounded border border-white/10 bg-[#171717] p-0.5">{[[15000, '15s'], [60000, '1m'], [300000, '5m'], [900000, '15m']].map(([ms, label]) => <button type="button" key={ms} aria-pressed={interval === ms} onClick={() => { setIntervalMs(Number(ms)); setOffset(0); setSelectedTime(null) }} className={cn('min-h-8 rounded px-2 text-[11px]', interval === ms ? 'bg-white/10 text-white' : 'text-neutral-500')}>{label}</button>)}</div>
+      <label className="flex items-center gap-1 text-[10px] text-neutral-500">Row<select aria-label="Footprint row size" value={rowTicks} onChange={e => setRowTicks(Number(e.target.value))} className={control}>{[...new Set([rowTicks, ...[0.5, 1, 2, 5, 10, 25, 100].map(m => Math.max(1, Math.round(baseTicks * m)))])].sort((a, b) => a - b).map(t => <option key={t} value={t}>{fmtPrice(t * meta.tick, meta.tick)}</option>)}</select></label>
+      <button type="button" aria-label={frozen ? 'Resume footprint' : 'Pause footprint'} onClick={() => { if (frozen) { setFrozen(null); setOffset(0); setSelectedTime(null) } else setFrozen({ ...data, trades: data.trades.slice() }) }} className={control}>{frozen ? <Play size={12} /> : <Pause size={12} />}</button>
+      <details className="relative max-sm:static"><summary className={cn(control, 'cursor-pointer list-none')}><Settings2 size={12} />Settings</summary><div className="absolute right-3 top-full z-30 mt-1 w-[min(300px,calc(100vw-24px))] space-y-3 rounded border border-white/15 bg-[#181818] p-3 text-[11px] shadow-xl">
+        <label className="flex items-center justify-between">Display units<select aria-label="Footprint units" value={units} onChange={e => setUnits(e.target.value as typeof units)} className={control}><option value="coin">{symbol.replace(/USDT$/, '')}</option><option value="usd">USDT</option></select></label>
+        <label className="flex items-center justify-between">Diagonal ratio<select aria-label="Footprint imbalance ratio" value={ratio} onChange={e => setRatio(Number(e.target.value))} className={control}>{[2, 3, 4, 5].map(r => <option key={r}>{r}</option>)}</select></label>
+        <label className="flex items-center justify-between gap-2">Min dominant coin volume<input aria-label="Minimum imbalance quantity" type="number" min="0" step="any" value={minQty} onChange={e => setMinQty(Math.max(0, Number(e.target.value) || 0))} className={cn(control, 'w-24')} /></label>
+        <p className="text-neutral-500">Imbalances and POC always use coin volume. Zero/missing diagonal opponents are excluded. Three adjacent imbalances form a stack.</p>
+      </div></details>
+      <details className="relative max-sm:static"><summary aria-label="Footprint methodology" className={cn(control, 'cursor-pointer list-none')}><CircleHelp size={13} /></summary><div className="absolute right-3 top-full z-30 mt-1 w-[min(340px,calc(100vw-24px))] space-y-2 rounded border border-white/15 bg-[#181818] p-3 text-[11px] leading-relaxed text-neutral-400 shadow-xl"><p>Numbers are actual Binance aggregate executions, not outstanding orders or trader identities. An aggregate ID can contain multiple fills.</p><p>Left = sell aggressors; right = buy aggressors. Buy imbalance compares with sells one price bin lower; sell imbalance with buys one bin higher. Gold = largest coin-volume row (POC).</p><p>Read filter: closed, fully bracketed recording, no ID gaps, at least 20 aggregate IDs. Initiative also requires ±15% delta, a three-level stack and price movement in the same direction. These are explicit heuristics, not backtested probabilities.</p><p>First/last partial bars and gaps suppress directional readings. Missing data is never reconstructed from candles. Visible-bar CVD is not session CVD.</p><a href="https://www.sierrachart.com/index.php?page=doc/NumbersBars.php#DiagonalComparisonOfBidVolumeAndAskVolume" target="_blank" rel="noreferrer" className="text-amber-300 underline">Diagonal comparison reference</a></div></details>
+    </div>
+    <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-b border-white/[0.07] px-3 py-2 text-[10px] text-neutral-500" data-testid="footprint-coverage">
+      <span>{feed.trades.length.toLocaleString()} recorded agg IDs</span><span>{bars.length} bars in view · {totals.count.toLocaleString()} IDs</span><span className={bars.some(b => !b.complete && !b.forming) ? 'text-amber-300' : ''}>{bars.filter(b => b.gaps).length} gapped bars · {bars.filter(b => b.partial).length} partial</span>
+      <button type="button" onClick={loadMore} disabled={!!frozen || history.loading || history.exhausted} className="text-neutral-300 underline decoration-neutral-700 underline-offset-2 disabled:text-neutral-600">{frozen ? 'Resume to load history' : history.loading ? 'Loading history…' : history.exhausted ? 'History limit reached' : history.error ? 'Retry history' : 'Load older trades'}</button>
+      {history.error && <span role="status" className="text-amber-300">{history.error}</span>}
+    </div>
+    <div className="grid shrink-0 grid-cols-3 divide-x divide-white/[0.06] border-b border-white/[0.08] text-[10px]">
+      <Metric label="Visible volume · USDT" value={fmtCompact(totals.usd, '$')} />
+      <Metric label="Visible CVD · coin" value={signed(totals.buy - totals.sell)} tone={totals.buy >= totals.sell ? 'text-emerald-400' : 'text-rose-400'} />
+      <Metric label="Buy share · coin" value={totals.buy + totals.sell ? `${(totals.buy / (totals.buy + totals.sell) * 100).toFixed(1)}%` : '—'} />
+    </div>
+    <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/[0.07] px-3 py-2 text-[10px] text-neutral-500">
+      <span><span className="text-rose-400">SELL</span> × <span className="text-emerald-400">BUY</span> · {units === 'usd' ? 'USDT' : symbol.replace(/USDT$/, '')} · <span className="text-amber-300">POC</span></span>
+      <div className="flex items-center gap-1"><button type="button" aria-label="Earlier footprint candles" disabled={endIndex <= 1} onClick={() => changeView(3)} className={control}><ChevronLeft size={12} /></button><button type="button" aria-label="Later footprint candles" disabled={!offset} onClick={() => changeView(-3)} className={control}><ChevronRight size={12} /></button>{offset > 0 && <button type="button" onClick={() => { setOffset(0); setFrozen(null); setSelectedTime(null) }} className={control}>Latest</button>}</div>
+    </div>
+    <div className="flex min-h-0 flex-1 flex-col xl:flex-row">
+      <div ref={scrollRef} className="min-h-[320px] flex-1 overflow-auto border-b border-white/10 xl:border-b-0" data-testid="footprint-grid">
+        {!bars.length ? <p className="p-8 text-center text-xs text-neutral-500">Waiting for recorded trade-by-price executions…</p> : rowCount > 160 ? <div className="p-8 text-center text-xs text-neutral-400"><p>{rowCount.toLocaleString()} price rows. Increase Row size for a readable footprint.</p><button type="button" onClick={() => setRowTicks(Math.max(1, Math.ceil((high - low + 1) * rowTicks / 60)))} className={cn(control, 'mt-3')}>Fit about 60 rows</button></div> : <div className="grid w-max min-w-full font-mono text-[10px] tabular-nums" style={{ gridTemplateColumns: `76px repeat(${bars.length}, minmax(130px, 1fr))` }} role="table" aria-label="Footprint sell by buy volume at price">
+          <div className="sticky left-0 top-0 z-30 border-b border-r border-white/10 bg-[#171717] p-2 text-neutral-500">Price bin</div>
+          {bars.map(bar => <button type="button" key={bar.t} onClick={() => setSelectedTime(bar.t)} aria-pressed={selected?.t === bar.t} className={cn('sticky top-0 z-20 border-b border-r border-white/10 bg-[#171717] p-2 text-center', selected?.t === bar.t && 'border-b-amber-400')}><span className={bar.c >= bar.o ? 'text-emerald-400' : 'text-rose-400'}>{utc(bar.t)} UTC</span><span className={cn('mt-1 block text-[9px]', bar.gaps || bar.partial ? 'text-amber-300' : 'text-neutral-500')}>{bar.forming ? 'Forming' : bar.gaps ? 'ID gaps' : bar.partial ? 'Partial' : 'Closed'}</span></button>)}
+          {rows.map(index => <PriceRow key={index} index={index} step={step} tick={meta.tick} bars={bars} selected={selected?.t} amount={amount} />)}
+          <div className="sticky bottom-0 left-0 z-30 border-t border-r border-white/10 bg-[#171717] p-2 text-neutral-500">Delta<br />coin</div>
+          {bars.map(bar => <div key={bar.t} className={cn('sticky bottom-0 z-10 border-r border-t border-white/10 bg-[#171717] p-2 text-center', bar.delta >= 0 ? 'text-emerald-400' : 'text-rose-400')}>{signed(bar.delta)}<span className="mt-1 block text-[9px] text-neutral-500">{bar.deltaPct.toFixed(1)}%</span></div>)}
+        </div>}
+      </div>
+      <aside className="shrink-0 space-y-3 bg-[#111111] p-3 text-[11px] xl:w-[258px] xl:overflow-y-auto xl:border-l xl:border-white/10" aria-label="Selected footprint candle analysis">
+        <div className="flex items-center justify-between text-[10px] text-neutral-500"><span>Selected candle</span><span>{selected ? `${utc(selected.t)} UTC` : '—'}</span></div>
+        <h2 className={cn('font-medium', tone)}>{reading.title}</h2><p className="leading-relaxed text-neutral-500">{reading.note}</p>
+        {selected && <><div className="grid grid-cols-2 gap-3 border-y border-white/[0.07] py-3"><Metric label="POC · coin volume" value={fmtPrice(selected.poc, meta.tick)} /><Metric label="Delta · coin" value={signed(selected.delta)} /><Metric label="Buy stack" value={`${selected.buyStack} levels`} /><Metric label="Sell stack" value={`${selected.sellStack} levels`} /></div>
+          <div className="space-y-2 text-[10px]"><ReadRow label="High / low" value={`${fmtPrice(selected.h, meta.tick)} / ${fmtPrice(selected.l, meta.tick)}`} /><ReadRow label="Buy / sell coin" value={`${fmtCompact(selected.buy)} / ${fmtCompact(selected.sell)}`} /><ReadRow label="POC migration" value={selected.complete && previous?.complete ? selected.poc > previous.poc ? 'Higher than previous' : selected.poc < previous.poc ? 'Lower than previous' : 'Unchanged' : 'Incomplete comparison'} /><ReadRow label="Observed follow-through" value={followThrough} /></div></>}
+        <p className="border-t border-white/[0.07] pt-2 text-[10px] text-neutral-500">Observed order flow · no calibrated probability or trade recommendation.</p>
+      </aside>
+    </div>
+  </div>
 }
 
-function fmtPriceLocal(v: number, tick: number): string {
-  const dp = Math.max(0, Math.min(8, Math.ceil(-Math.log10(tick))))
-  return v.toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp })
+function PriceRow({ index, step, tick, bars, selected, amount }: { index: number; step: number; tick: number; bars: FootprintBar[]; selected?: number; amount: (r: FootprintRow | undefined, side: 'buy' | 'sell') => string }) {
+  const price = Number((index * step).toPrecision(14))
+  return <>
+    <div role="rowheader" title={`${fmtPrice(price, tick)} to below ${fmtPrice(price + step, tick)}`} className="sticky left-0 z-10 flex h-7 items-center justify-end border-b border-r border-white/[0.05] bg-[#111111] px-2 text-neutral-500">{fmtPrice(price, tick)}</div>
+    {bars.map(bar => {
+      const row = bar.rows.get(index), poc = row && row.price === bar.poc
+      return <div key={bar.t} role="cell" title={row ? `Sell ${row.sell} coin / ${row.sellUsd} USDT; buy ${row.buy} coin / ${row.buyUsd} USDT${poc ? '; coin-volume POC' : ''}` : 'No recorded executions in this bin'} className={cn('grid h-7 grid-cols-2 border-b border-r border-white/[0.04] text-center', selected === bar.t && 'bg-white/[0.025]', poc && 'outline outline-1 -outline-offset-1 outline-amber-400/50')}>
+        <span className={cn('flex items-center justify-center text-rose-400/80', row?.sellImbalance && 'bg-rose-500/20 font-semibold text-rose-300')}>{amount(row, 'sell')}{row?.sellImbalance && <span className="ml-1 text-[8px]">▼</span>}</span>
+        <span className={cn('flex items-center justify-center text-emerald-400/80', row?.buyImbalance && 'bg-emerald-500/20 font-semibold text-emerald-300')}>{amount(row, 'buy')}{row?.buyImbalance && <span className="ml-1 text-[8px]">▲</span>}</span>
+      </div>
+    })}
+  </>
 }
+function Metric({ label, value, tone = 'text-neutral-200' }: { label: string; value: string; tone?: string }) { return <div className="min-w-0 px-2 py-2"><div className="text-[9px] text-neutral-500">{label}</div><div className={cn('mt-1 break-words font-mono text-xs tabular-nums', tone)}>{value}</div></div> }
+function ReadRow({ label, value }: { label: string; value: string }) { return <div className="flex justify-between gap-3"><span className="text-neutral-500">{label}</span><span className="max-w-[60%] text-right text-neutral-300">{value}</span></div> }
