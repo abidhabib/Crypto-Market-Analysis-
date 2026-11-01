@@ -17,7 +17,6 @@ export default function CryptoBubblesPanel() {
   return (
     <div className="flex h-full min-h-0 flex-col bg-[#111318]">
       <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/60 px-3 py-1.5 text-xs">
-        <span className="text-muted-foreground">Crypto Bubbles <span className="hidden sm:inline">· live market view from cryptobubbles.net</span></span>
         <button
           type="button"
           onClick={reload}

@@ -21,12 +21,7 @@ export function DataQualityStrip({ quality: q, connected, span, historical, trad
       <span className={q.gaps ? 'text-amber-300' : ''}>{q.gaps} gap{q.gaps === 1 ? '' : 's'}{q.resets ? ` · ${q.resets} book rebuild${q.resets === 1 ? '' : 's'}` : ''}</span>
       {q.sampled && <span>Sampled history</span>}<span className="ml-auto text-slate-600">Details</span>
     </summary>
-    <div className="mt-2 max-w-3xl space-y-1 text-[11px] leading-relaxed text-slate-500">
-      <p>Depth age measures time since the last source book update, not round-trip network latency. A synced book is this venue’s synchronized L2 view; it is not the entire crypto market.</p>
-      <p>Gaps exceed three seconds between recorded snapshots. Book rebuilds restart persistence tracking. Sampled history can miss changes between snapshots, and zone ages are lower bounds from the available recording.</p>
-      <p>{tradeCount.toLocaleString()} trades are available in this view; the oldest is {duration(tradeMs)} before the playhead. Trade history may be shorter than depth history. No trade observations are invented for missing history.</p>
-      <p>Possible absorption uses closed 5s windows: ≥75% one-sided flow, ≥$50K and half the nearby resting size executed, with ≤0.75 price-bin net movement. Consumption and withdrawal compare snapshot reductions with recorded trades; neither proves individual order behavior.</p>
-    </div>
+   
   </details>
 }
 
