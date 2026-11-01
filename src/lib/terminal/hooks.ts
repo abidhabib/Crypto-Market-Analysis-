@@ -39,7 +39,7 @@ export function useRaf(draw: () => void, active = true, minMs = 0) {
 }
 
 /** ResizeObserver-driven canvas sizing with devicePixelRatio scaling. */
-export function useCanvasSize(canvasRef: React.RefObject<HTMLCanvasElement | null>) {
+export function useCanvasSize(canvasRef: React.RefObject<HTMLCanvasElement | null>, maxDpr = 2) {
   const [size, setSize] = useState({ w: 0, h: 0 })
   useEffect(() => {
     const el = canvasRef.current
@@ -49,7 +49,7 @@ export function useCanvasSize(canvasRef: React.RefObject<HTMLCanvasElement | nul
     const ro = new ResizeObserver(() => {
       const w = parent.clientWidth
       const h = parent.clientHeight
-      const dpr = Math.min(2, window.devicePixelRatio || 1)
+      const dpr = Math.min(maxDpr, window.devicePixelRatio || 1)
       el.width = Math.max(1, Math.floor(w * dpr))
       el.height = Math.max(1, Math.floor(h * dpr))
       el.style.width = `${w}px`
@@ -60,7 +60,7 @@ export function useCanvasSize(canvasRef: React.RefObject<HTMLCanvasElement | nul
     })
     ro.observe(parent)
     return () => ro.disconnect()
-  }, [canvasRef])
+  }, [canvasRef, maxDpr])
   return size
 }
 

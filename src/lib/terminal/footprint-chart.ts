@@ -47,6 +47,8 @@ export function drawFootprintChart(ctx: CanvasRenderingContext2D, v: FootprintCh
   ctx.clearRect(0, 0, w, h); ctx.fillStyle = '#0c0c0c'; ctx.fillRect(0, 0, w, h)
   if (w < 140 || h < 230) return
   const g = footprintGeometry(v), bars = visibleFootprintBars(v)
+  const scale = ctx.getTransform?.()?.a || 1
+  const pixel = (n: number) => Math.round(n * scale) / scale
   const cw = (g.right - g.left) * v.interval / Math.max(1, v.end - v.start)
   const rowH = Math.abs(g.y(v.low) - g.y(v.low + v.step))
   const cellW = Math.min(220, cw * 0.8), labels = cellW >= 64 && rowH >= 12
@@ -69,25 +71,26 @@ export function drawFootprintChart(ctx: CanvasRenderingContext2D, v: FootprintCh
     if (v.selected === b.t) { ctx.fillStyle = '#ffffff05'; ctx.fillRect(g.x(b.t), g.top, cw, g.bottom - g.top) }
     ctx.strokeStyle = '#ffffff08'; ctx.beginPath(); ctx.moveTo(g.x(b.t), g.top); ctx.lineTo(g.x(b.t), g.bottom); ctx.stroke()
     for (const r of b.rows.values()) {
-      const y = g.y(r.price + v.step), rh = Math.max(0.5, rowH - 0.7)
+      const y = pixel(g.y(r.price + v.step)), rh = Math.max(1 / scale, pixel(rowH - 0.7))
       if (y > g.bottom || y + rowH < g.top) continue
       for (const [side, sx, c] of [['sell', x0, sell], ['buy', x, buy]] as const) {
         const qty = r[side], imbalanced = side === 'buy' ? r.buyImbalance : r.sellImbalance
         if (!qty) continue
-        ctx.globalAlpha = imbalanced ? 0.55 : 0.08 + 0.35 * qty / biggest
-        ctx.fillStyle = c; ctx.fillRect(sx, y, cellW / 2, rh); ctx.globalAlpha = 1
+        ctx.globalAlpha = imbalanced ? 0.75 : 0.22 + 0.4 * qty / biggest
+        ctx.fillStyle = c; ctx.fillRect(pixel(sx), y, pixel(sx + cellW / 2) - pixel(sx), rh); ctx.globalAlpha = 1
       }
       if (v.showPoc && r.price === b.poc) { ctx.strokeStyle = '#d9b54c'; ctx.strokeRect(x0 + 0.5, y + 0.5, cellW - 1, Math.max(1, rh - 1)) }
       if (labels) {
-        ctx.font = `${r.buyImbalance || r.sellImbalance ? '600 ' : ''}${Math.min(11, Math.max(9, rowH * 0.55))}px ui-monospace, monospace`
-        ctx.textAlign = 'center'; const baseline = y + rowH / 2 + 3
-        ctx.fillStyle = r.sellImbalance ? '#ffb0b8' : '#c5b1b3'; ctx.fillText(footprintVolume(v.units === 'coin' ? r.sell : r.sellUsd), x0 + cellW / 4, baseline, cellW / 2 - 4)
-        ctx.fillStyle = r.buyImbalance ? '#85edc7' : '#acc9bd'; ctx.fillText(footprintVolume(v.units === 'coin' ? r.buy : r.buyUsd), x + cellW / 4, baseline, cellW / 2 - 4)
+        ctx.font = `${r.buyImbalance || r.sellImbalance ? '600 ' : ''}${Math.min(11, Math.max(10, Math.floor(rowH * 0.55)))}px ui-monospace, monospace`
+        ctx.textAlign = 'center'; const baseline = pixel(y + rowH / 2 + 3)
+        ctx.fillStyle = r.sellImbalance ? '#ffe0e3' : '#ead8da'; ctx.fillText(footprintVolume(v.units === 'coin' ? r.sell : r.sellUsd), pixel(x0 + cellW / 4), baseline, cellW / 2 - 4)
+        ctx.fillStyle = r.buyImbalance ? '#d6ffef' : '#d1e9df'; ctx.fillText(footprintVolume(v.units === 'coin' ? r.buy : r.buyUsd), pixel(x + cellW / 4), baseline, cellW / 2 - 4)
       }
     }
-    const railX = x0 - Math.min(6, cw * 0.08)
-    ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(railX, g.y(b.h)); ctx.lineTo(railX, g.y(b.l)); ctx.stroke()
-    ctx.fillStyle = color; ctx.fillRect(railX - 1.5, Math.min(g.y(b.o), g.y(b.c)), 3, Math.max(2, Math.abs(g.y(b.o) - g.y(b.c))))
+    const railX = pixel(x0 - Math.min(6, cw * 0.08))
+    ctx.fillStyle = color
+    ctx.fillRect(railX, pixel(g.y(b.h)), 1 / scale, Math.max(1 / scale, pixel(g.y(b.l) - g.y(b.h))))
+    ctx.fillRect(pixel(railX - 1), pixel(Math.min(g.y(b.o), g.y(b.c))), 3, Math.max(2, pixel(Math.abs(g.y(b.o) - g.y(b.c)))))
     if (b.gaps || b.partial) { ctx.setLineDash([2, 3]); ctx.strokeStyle = '#d9b54c88'; ctx.strokeRect(x0, g.y(b.h + v.step), cellW, Math.max(rowH, g.y(b.l) - g.y(b.h + v.step))); ctx.setLineDash([]) }
     if (v.showPoc) {
       ctx.strokeStyle = '#d9b54c88'; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(x0 + cellW, g.y(b.poc + v.step / 2)); ctx.lineTo(g.x(b.end), g.y(b.poc + v.step / 2)); ctx.stroke(); ctx.setLineDash([])

@@ -44,7 +44,7 @@ function FootprintWorkspace({ symbol }: { symbol: string }) {
   const scene = useRef<HTMLCanvasElement | null>(null)
   const painted = useRef<{ view: FootprintChartView; key: string } | null>(null)
   const down = useRef<{ x: number; y: number } | null>(null)
-  const size = useCanvasSize(canvasRef)
+  const size = useCanvasSize(canvasRef, 3)
   const all = useMemo(() => buildFootprint(feed.trades, { interval, tick: meta.tick, rowTicks, ratio, minQty, end: feed.asOf }), [feed.trades, feed.asOf, interval, meta.tick, rowTicks, ratio, minQty])
   const span = viewport?.span ?? interval * (size.w < 600 ? 5 : 18)
   const end = viewport?.end ?? feed.asOf + interval * 2, start = end - span
@@ -85,7 +85,12 @@ function FootprintWorkspace({ symbol }: { symbol: string }) {
       base.setTransform(el.width / size.w, 0, 0, el.height / size.h, 0, 0)
       drawFootprintChart(base, view); painted.current = { view, key: paintKey }
     }
-    ctx.clearRect(0, 0, size.w, size.h); ctx.drawImage(off, 0, 0, size.w, size.h)
+    // Copy physical pixels directly. Scaling through CSS-sized destinations can
+    // resample the cached image at fractional DPR/browser zoom levels.
+    ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0)
+    ctx.clearRect(0, 0, el.width, el.height); ctx.imageSmoothingEnabled = false
+    ctx.drawImage(off, 0, 0); ctx.restore()
+    ctx.setTransform(el.width / size.w, 0, 0, el.height / size.h, 0, 0)
     drawFootprintCursor(ctx, view, pointer)
   }, true, 16)
   const totals = bars.reduce((v, b) => ({ buy: v.buy + b.buy, sell: v.sell + b.sell, usd: v.usd + b.buyUsd + b.sellUsd, count: v.count + b.count }), { buy: 0, sell: 0, usd: 0, count: 0 })
