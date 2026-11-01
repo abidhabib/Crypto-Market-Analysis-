@@ -9,9 +9,11 @@ import {
 import { useTerminal } from '@/lib/terminal/store'
 import { getStream, setStreamSymbol } from '@/lib/terminal/stream-client'
 import { usePoll, useHotkeys } from '@/lib/terminal/hooks'
+import { candleBucket } from '@/lib/terminal/candle-bucket.js'
+import TimeframePicker from './timeframe-picker'
 import { aggregate, timeframeMs, ema, bollinger, rsi, sessionVwap } from '@/lib/terminal/indicators'
 import { levels as keyLevels } from '@/lib/terminal/analytics'
-import { metaFor, GREEN, RED, GRID, TEXT_DIM, TIMEFRAMES } from '@/lib/terminal/constants'
+import { metaFor, GREEN, RED, GRID, TEXT_DIM } from '@/lib/terminal/constants'
 import { fmtPrice, fmtCompact, fmtPct } from '@/lib/terminal/format'
 import { PanelHeader, SourceBadge } from './panel-kit'
 import { cn } from '@/lib/utils'
@@ -195,7 +197,14 @@ export default function ChartPanel() {
       const lastAgg = agg[agg.length - 1]
       const lastBase = base[base.length - 1]
       if (lastAgg.t > lastBase.t) merged = [...base, lastAgg]
-      else if (lastAgg.t === lastBase.t) merged = [...base.slice(0, -1), { ...lastAgg }]
+      else if (lastAgg.t === lastBase.t) {
+        const partial = stream[0].t > lastBase.t
+        merged = [...base.slice(0, -1), { ...lastAgg,
+          o: partial ? lastBase.o : lastAgg.o,
+          h: Math.max(lastBase.h, lastAgg.h), l: Math.min(lastBase.l, lastAgg.l),
+          v: partial ? Math.max(lastBase.v, lastAgg.v) : lastAgg.v,
+        }]
+      }
     }
     if (!merged.length) return
     baseRef.current = merged
@@ -256,7 +265,7 @@ export default function ChartPanel() {
           if (t.t < cutoff) continue
           const notional = t.p * t.q
           if (notional < 250_000) continue
-          const b = Math.floor(t.t / tfMs) * tfMs
+          const b = candleBucket(t.t, tfMs)
           const cur = buckets.get(b) ?? { buy: 0, sell: 0 }
           if (t.m) cur.sell += notional
           else cur.buy += notional
@@ -280,7 +289,7 @@ export default function ChartPanel() {
         const trades = getStream().trades
         const buckets = new Map<number, number>()
         for (const t of trades) {
-          const b = Math.floor(t.t / tfMs) * tfMs
+          const b = candleBucket(t.t, tfMs)
           const n = t.p * t.q
           buckets.set(b, (buckets.get(b) ?? 0) + (t.m ? -n : n))
         }
@@ -355,15 +364,7 @@ export default function ChartPanel() {
         source="Binance spot"
         right={
           <>
-            <div className="flex overflow-hidden rounded-md border border-border">
-              {TIMEFRAMES.map((tf) => (
-                <button key={tf.id} onClick={() => setTimeframe(tf.id as typeof timeframe)}
-                  className={cn('px-2 py-1 text-[11px] font-medium hover:bg-muted',
-                    timeframe === tf.id ? 'bg-muted text-foreground' : 'text-muted-foreground')}>
-                  {tf.id}
-                </button>
-              ))}
-            </div>
+            <TimeframePicker value={timeframe} onChange={id => setTimeframe(id as typeof timeframe)} />
             {([
               ['ema20', 'EMA20'], ['ema50', 'EMA50'], ['bb', 'BB'], ['vwap', 'VWAP'],
               ['vol', 'Vol'], ['rsi', 'RSI'], ['cvd', 'CVD'], ['whales', 'Whales'], ['levels', 'Levels'],

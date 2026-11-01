@@ -1,5 +1,6 @@
 import type { Candle } from './types'
 import { TIMEFRAMES } from './constants'
+import { candleBucket } from './candle-bucket.js'
 
 export function sma(values: number[], period: number): (number | null)[] {
   const out: (number | null)[] = []
@@ -86,7 +87,7 @@ export function aggregate(candles: Candle[], tfMs: number): Candle[] {
   const out: Candle[] = []
   let cur: Candle | null = null
   for (const c of candles) {
-    const bucket = Math.floor(c.t / tfMs) * tfMs
+    const bucket = candleBucket(c.t, tfMs)
     if (!cur || cur.t !== bucket) {
       if (cur) out.push(cur)
       cur = { t: bucket, o: c.o, h: c.h, l: c.l, c: c.c, v: c.v }

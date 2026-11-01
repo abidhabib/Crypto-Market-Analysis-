@@ -5,7 +5,8 @@ import { ArrowLeft, CircleHelp, Link2, Link2Off, Maximize2, Minus, Pause, Play, 
 import { useTerminal } from '@/lib/terminal/store'
 import { useCanvasSize, useRaf } from '@/lib/terminal/hooks'
 import { useWhalesData, type WhalesFeed } from '@/lib/terminal/use-whales-data'
-import { metaFor, TIMEFRAMES } from '@/lib/terminal/constants'
+import { metaFor } from '@/lib/terminal/constants'
+import TimeframePicker from './timeframe-picker'
 import { timeframeMs } from '@/lib/terminal/indicators'
 import { fmtCompact, fmtPct, fmtPrice } from '@/lib/terminal/format'
 import { cn } from '@/lib/utils'
@@ -132,7 +133,7 @@ function WhalesWorkspace({ symbol }: { symbol: string }) {
       <span className="text-[10px] text-slate-500">Detect</span>
       <div className="inline-flex rounded-md border border-white/10 bg-[#101721] p-0.5" role="group" aria-label="Whale detection mode">{whaleModes.map(m => <button type="button" key={m.id} title={m.help} aria-pressed={mode === m.id} onClick={() => { setMode(m.id); setSelectedId(null) }} className={cn('min-h-7 rounded px-2 text-[11px] transition-colors focus-visible:ring-2 focus-visible:ring-emerald-400', mode === m.id ? 'bg-white/10 font-medium text-white' : 'text-slate-500 hover:text-slate-200')}>{m.label}</button>)}</div>
       <label className="ml-1 flex items-center gap-1.5 text-[10px] text-slate-500">Size ≥<select aria-label="Whale minimum notional" value={threshold} onChange={e => setThreshold(e.target.value === 'auto' ? 'auto' : Number(e.target.value))} className={field}><option value="auto">Auto ({fmtCompact(analysis.threshold, '$')})</option>{[1000, 10000, 50000, 100000, 250000, 1000000, 5000000].map(n => <option key={n} value={n}>{fmtCompact(n, '$')}</option>)}</select></label>
-      <div className="flex items-center gap-0.5 border-l border-white/10 pl-2" role="group" aria-label="Whale candle timeframe">{TIMEFRAMES.map(t => <button type="button" key={t.id} aria-pressed={timeframe === t.id} onClick={() => { if (ownTf === null) setSharedTf(t.id); else setOwnTf(t.id); setFrozen(null); setViewport(null); setSpan(Math.max(2 * 3600000, t.ms * 90)) }} className={cn('min-h-8 rounded px-1.5 text-[10px] focus-visible:ring-2 focus-visible:ring-sky-400', timeframe === t.id ? 'bg-white/10 text-slate-100' : 'text-slate-500 hover:text-slate-300')}>{t.id}</button>)}</div>
+      <TimeframePicker value={timeframe} label="Whale candle interval" onChange={(id, ms) => { if (ownTf === null) setSharedTf(id); else setOwnTf(id); setFrozen(null); setViewport(null); setSpan(Math.max(2 * 3600000, ms * 90)) }} />
       <button type="button" aria-label="Link whale timeframe" aria-pressed={ownTf === null} title={ownTf === null ? 'Linked to shared timeframe; click to use its own' : 'Independent timeframe; click to link'} onClick={() => { setOwnTf(ownTf === null ? timeframe : null); setFrozen(null); setViewport(null) }} className={cn(control, 'border-transparent text-slate-500')}>{ownTf === null ? <Link2 size={13} /> : <Link2Off size={13} />}</button>
       <div className="flex gap-2 font-mono text-[10px]"><span className="text-emerald-400">buy {fmtCompact(analysis.buy, '$')}</span><span className="text-rose-400">sell {fmtCompact(analysis.sell, '$')}</span></div>
       <div className="flex flex-wrap items-center gap-0.5 xl:ml-auto">

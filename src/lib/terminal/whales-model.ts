@@ -1,4 +1,5 @@
 import type { Candle, Trade } from './types'
+import { candleBucket } from './candle-bucket.js'
 
 export type WhaleMode = 'print' | 'sweep' | 'aggressive' | 'level'
 export const whaleModes: { id: WhaleMode; label: string; help: string }[] = [
@@ -109,7 +110,7 @@ export function whaleAnalysis(trades: readonly Trade[], start: number, end: numb
       if (t.m) { sell += usd; sellQty += t.q } else { buy += usd; buyQty += t.q }
       addRow(profile, t)
     }
-    const bucket = Math.floor(t.t / timeframe) * timeframe
+    const bucket = candleBucket(t.t, timeframe)
     const bar = buckets.get(bucket) ?? { t: bucket, buy: 0, sell: 0, largeBuy: 0, largeSell: 0, largeNet: 0, otherNet: 0, largeCvd: 0, otherCvd: 0 }
     bar[t.m ? 'sell' : 'buy'] += usd
     if (large) bar[t.m ? 'largeSell' : 'largeBuy'] += usd
@@ -160,7 +161,7 @@ export function whaleCandles(history: readonly Candle[], live: readonly Candle[]
   const buckets = new Map<number, Candle[]>()
   for (const c of live) {
     if (!(c.o > 0 && c.l > 0 && Number.isFinite(c.h + c.c + c.v))) continue
-    const t = Math.floor(c.t / timeframe) * timeframe, rows = buckets.get(t) ?? []; rows.push(c); buckets.set(t, rows)
+    const t = candleBucket(c.t, timeframe), rows = buckets.get(t) ?? []; rows.push(c); buckets.set(t, rows)
   }
   for (const [t, rows] of buckets) {
     rows.sort((a, b) => a.t - b.t)

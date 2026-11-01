@@ -44,11 +44,19 @@ export function metaFor(id: string, lastPrice?: number): { id: string; label: st
 
 export const TIMEFRAMES = [
   { id: '1m', ms: 60_000 },
+  { id: '3m', ms: 180_000 },
   { id: '5m', ms: 300_000 },
   { id: '15m', ms: 900_000 },
+  { id: '30m', ms: 1_800_000 },
   { id: '1h', ms: 3_600_000 },
+  { id: '2h', ms: 7_200_000 },
   { id: '4h', ms: 14_400_000 },
+  { id: '6h', ms: 21_600_000 },
+  { id: '8h', ms: 28_800_000 },
+  { id: '12h', ms: 43_200_000 },
   { id: '1d', ms: 86_400_000 },
+  { id: '3d', ms: 259_200_000 },
+  { id: '1w', ms: 604_800_000 },
 ] as const
 export type TimeframeId = (typeof TIMEFRAMES)[number]['id']
 

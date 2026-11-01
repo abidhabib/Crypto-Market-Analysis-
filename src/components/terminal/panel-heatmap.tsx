@@ -16,7 +16,7 @@ import { levels as decisionLevels } from '@/lib/terminal/analytics'
 import { columnLayout } from '@/lib/terminal/heatmap-columns-renderer'
 import { orderFlowAt, planLines, liquidationScenarios, gammaLines, recordedLiquidations, type HeatmapColumn, type MapLine } from '@/lib/terminal/heatmap-orderflow'
 import type { GammaData } from '@/lib/terminal/types'
-import { HeatmapColumnsMenu, CompactFlowLadder } from './heatmap-orderflow-controls'
+import { HeatmapColumnsMenu, CompactFlowLadder, StackedFlowColumns } from './heatmap-orderflow-controls'
 import { useHeatmapNavigation } from '@/lib/terminal/use-heatmap-navigation'
 
 const WINDOWS = [{ label: '1m', ms: 60000 }, { label: '2m', ms: 120000 }, { label: '5m', ms: 300000 }, { label: '10m', ms: 600000 }]
@@ -163,7 +163,7 @@ function HeatmapWorkspace({ symbol }: { symbol: string }) {
   }
   const bubbles = useMemo(() => getTradeBubbles(view), [data.trades, start, end, mid, center, range, step, minTrade, bubbleScale, size.w, size.h, showProfile, selectedColumns, showCvd, bubbleMode, bubbleInterval])
   const geometry = heatmapGeometry(view)
-  const bounds = { earliest: data.heatCols[0]?.t ?? end, latest: data.observedAt, mid: data.heatCols.at(-1)?.mid ?? mid }
+  const bounds = { earliest: data.heatCols[0]?.t ?? end, latest: data.observedAt, mid: data.heatCols.at(-1)?.mid ?? mid, maxSpan: Math.max(600000, historyMs) }
   const navigation = { end, span, center, halfRange: mid * range / 100 }
   function navigate(next: MapViewport) {
     if (!replaySource && !frozen) setFrozen(captureFeed())
@@ -258,6 +258,7 @@ function HeatmapWorkspace({ symbol }: { symbol: string }) {
       <div className="flex flex-wrap items-center gap-1.5 border-b border-white/[0.07] px-3 py-2">
         <div className="flex rounded-lg border border-white/10 bg-[#0d1623] p-0.5" role="group" aria-label="Time window">
           {WINDOWS.map(w => <button key={w.ms} type="button" aria-pressed={span === w.ms} onClick={() => { setSpan(w.ms); setViewport(null) }} className={cn('min-h-7 rounded-md px-2.5 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-sky-400', span === w.ms ? 'bg-slate-700/60 text-white shadow-sm' : 'text-slate-400 hover:text-white')}>{w.label}</button>)}
+          <button type="button" disabled={!historyMs} title={`Show all ${duration(historyMs)} of retained liquidity history`} onClick={() => { setSpan(Math.max(60000, historyMs)); setViewport(null) }} className="min-h-7 rounded-md px-2 text-[11px] text-sky-300 outline-none hover:bg-white/5 focus-visible:ring-2 focus-visible:ring-sky-400 disabled:opacity-40">Recorded</button>
         </div>
         <label className="flex items-center gap-2 text-xs text-slate-400">
           <span className="hidden sm:inline">Price range</span>
@@ -313,7 +314,7 @@ function HeatmapWorkspace({ symbol }: { symbol: string }) {
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col min-[1400px]:flex-row">
-        <div className="flex min-h-[410px] min-w-0 flex-1 flex-col">
+        <div className="flex min-h-[410px] min-w-0 shrink-0 flex-col min-[1400px]:flex-1">
           <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 text-[10px] text-slate-400">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2"><KeyDot color={BID_COLOR} label="Bid liquidity" /><KeyDot color={ASK_COLOR} label="Ask liquidity" /><span className="flex items-center gap-1.5"><span className="h-px w-4 bg-slate-200" />Mid price</span>{showTrades && <><KeyDot color="#6ee7b7" label="Buy trades" /><KeyDot color="#fda4af" label="Sell trades" /></>}</div>
             <span className="text-slate-500" title="T: touch · C: possible consumption · W: possible withdrawal. Hover any marker for evidence.">{showReactions ? 'A possible absorption · R rejection · + refill · hover markers' : 'Bubble area = executed USDT · nearby fills grouped'}</span>
@@ -338,7 +339,8 @@ function HeatmapWorkspace({ symbol }: { symbol: string }) {
               {hoverColumn ? <><div className="flex justify-between text-sky-300"><span>Resting bids</span><span className="font-mono">{fmtCompact(hoverBid, '$')}</span></div><div className="mt-1 flex justify-between text-amber-300"><span>Resting asks</span><span className="font-mono">{fmtCompact(hoverAsk, '$')}</span></div><div className="mt-2 border-t border-white/10 pt-2 text-[10px] text-slate-500">Snapshot {clock(hoverColumn.t)} · {fmtPrice(step, meta.tick)} price bin</div></> : <p className="text-slate-400">No recorded snapshot at this time.</p>}
             </div>}
           </div>
-          <CompactFlowLadder flow={orderFlow} mid={mid} tick={meta.tick} units={domUnits} />
+          <CompactFlowLadder flow={orderFlow} mid={mid} tick={meta.tick} units={domUnits} expanded={columnLayout(size.w, selectedColumns).hidden.includes('dom')} />
+          {columnLayout(size.w, selectedColumns).hidden.some(id => id !== 'dom') && <StackedFlowColumns selected={columnLayout(size.w, selectedColumns).hidden} flow={orderFlow} mid={mid} tick={meta.tick} tapeMin={tapeMin} />}
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/[0.06] px-4 py-2 text-[10px] text-slate-500"><span className="flex items-center gap-1.5"><Crosshair size={11} />Scroll to zoom · Pinch to zoom both axes · Drag to pan</span><span title="Shift + scroll: price zoom. Horizontal swipe: pan time. Double-click: reset.">Time: UTC · USDT · {frozen ? 'Frozen snapshot' : last ? `Last depth ${Math.max(0, (end - last.t) / 1000).toFixed(1)}s ago` : 'No depth yet'}</span></div>
         </div>
 
