@@ -136,7 +136,6 @@
   background: #111111;
 }
 @media (max-width: 639px) {
-  .trading-terminal > footer { display: none; }
   .trading-terminal [data-testid="heatmap-quality"] { padding: 6px 12px; }
   .trading-terminal [data-testid="heatmap-quality"] > summary { gap: 4px 12px; }
   .trading-terminal [data-testid="heatmap-quality"] > summary > span:nth-child(2),

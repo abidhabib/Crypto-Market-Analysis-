@@ -1,13 +1,14 @@
 'use client'
 
 import { useEffect } from 'react'
+import Image from 'next/image'
 import { useTerminal } from '@/lib/terminal/store'
 import { setStreamSymbol, getStream } from '@/lib/terminal/stream-client'
 import { usePoll, useNow } from '@/lib/terminal/hooks'
 import { metaFor } from '@/lib/terminal/constants'
 import { fmtPrice, fmtPct, fmtCompact } from '@/lib/terminal/format'
 import { cn } from '@/lib/utils'
-import { PanelRight, Activity, ChevronDown } from 'lucide-react'
+import { PanelRight, ChevronDown } from 'lucide-react'
 
 export default function TopBar({ status }: { status: 'connecting' | 'live' | 'offline' }) {
   const { symbol, setSymbol, toggleRail, railOpen, setScannerOpen, tab } = useTerminal()
@@ -24,14 +25,12 @@ export default function TopBar({ status }: { status: 'connecting' | 'live' | 'of
   const clock = useNow(1000)
 
   return (
-    <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border/60 bg-[#0d1017] px-3" role="banner">
-      <div className="flex items-center gap-2">
-        <div className="flex size-6 items-center justify-center rounded bg-[#f0b90b]/15">
-          <Activity className="size-4 text-[#f0b90b]" />
-        </div>
+    <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border/60 bg-[#111111] px-2 sm:gap-3 sm:px-3" role="banner">
+      <div className="flex shrink-0 items-center gap-2" aria-label="FlowLens market terminal">
+        <Image src="/flowlens.svg" alt="" width={28} height={28} className="size-7 shrink-0" />
         <div className="leading-none">
-          <div className="text-sm font-bold tracking-tight">OrderFlow <span className="text-[#f0b90b]">Terminal</span></div>
-          <div className="mt-0.5 text-[9px] uppercase tracking-wider text-muted-foreground">by <span className="text-[#f0b90b]">abidhabib</span></div>
+          <div className="text-sm font-semibold tracking-tight text-neutral-100">FlowLens</div>
+          <div className="mt-1 text-[8px] uppercase tracking-[0.14em] text-neutral-500">Market terminal</div>
         </div>
       </div>
 
@@ -71,10 +70,11 @@ export default function TopBar({ status }: { status: 'connecting' | 'live' | 'of
             status === 'connecting' && 'border-[#f0b90b]/40 bg-[#f0b90b]/10 text-[#f0b90b]',
             status === 'offline' && 'border-border bg-muted text-muted-foreground')}
           role="status"
+          title={status === 'connecting' ? 'Connecting to market feed' : undefined}
         >
           <span className={cn('size-1.5 rounded-full',
             status === 'live' ? 'animate-pulse bg-[#16c784]' : status === 'connecting' ? 'animate-pulse bg-[#f0b90b]' : 'bg-muted-foreground')} />
-          {status === 'live' ? 'LIVE' : status.toUpperCase()}
+          {status === 'connecting' ? <><span className="sm:hidden">SYNC</span><span className="hidden sm:inline">CONNECTING</span></> : status === 'live' ? 'LIVE' : 'OFFLINE'}
         </span>
         <span className="hidden font-mono text-[11px] text-muted-foreground md:block">
           {clock ? new Date(clock).toISOString().slice(11, 19) + ' UTC' : '—'}
@@ -83,7 +83,7 @@ export default function TopBar({ status }: { status: 'connecting' | 'live' | 'of
           onClick={toggleRail}
           aria-label="Toggle order book rail"
           title="Toggle order book rail (B)"
-          className={cn('rounded-md border p-1.5 hover:bg-muted',
+          className={cn('hidden rounded-md border p-1.5 hover:bg-muted xl:inline-flex',
             railOpen ? 'border-[#4da3ff]/50 text-[#4da3ff]' : 'border-border text-muted-foreground')}
         >
           <PanelRight className="size-4" />

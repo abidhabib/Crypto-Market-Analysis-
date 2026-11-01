@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import dynamic from 'next/dynamic'
+import { Mail, Globe } from 'lucide-react'
 import { useTerminal } from '@/lib/terminal/store'
 import { getStream, subscribeStream } from '@/lib/terminal/stream-client'
 import { useHotkeys } from '@/lib/terminal/hooks'
@@ -80,10 +81,16 @@ export default function Terminal() {
         )}
       </main>
       <MarketPicker />
-      <footer className="flex h-6 shrink-0 items-center gap-3 overflow-x-auto border-t border-border/60 bg-[#111111] px-3 text-[10px] text-muted-foreground" role="contentinfo">
-        <span>keys: <kbd className="rounded bg-muted px-1 font-mono">1–9,0</kbd> tabs · <kbd className="rounded bg-muted px-1 font-mono">G</kbd> guide · {tab === 'bubbles' ? 'C: Crypto Bubbles · use the controls inside the view' : tab === 'heatmap' ? 'Columns menu: aligned book & tape' : tab === 'whales' ? 'Whales: hover / tap bubbles · Home: live' : <><kbd className="rounded bg-muted px-1 font-mono">B</kbd> book rail</>}</span>
-        <span className="hidden sm:inline">{tab === 'bubbles' ? 'source: cryptobubbles.net · independent market feed' : 'sources: Binance spot & futures · Deribit · alternative.me'}</span>
-        <span className="ml-auto hidden shrink-0 xl:inline">estimates: liquidation map, L3-style events — see Guide</span>
+      <footer className="flex h-8 shrink-0 items-center justify-between gap-2 border-t border-white/[0.08] bg-[#111111] px-3 font-mono text-[10px] text-neutral-500" role="contentinfo">
+        <span className="shrink-0 text-neutral-400">Abid Habib</span>
+        <div className="flex items-center gap-3 sm:gap-5">
+          <a href="mailto:abid.habib@outlook.com" aria-label="Email Abid Habib at abid.habib@outlook.com" title="abid.habib@outlook.com" className="inline-flex min-h-8 items-center gap-1.5 transition-colors hover:text-neutral-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-400">
+            <Mail size={12} aria-hidden="true" /><span className="hidden sm:inline">abid.habib@outlook.com</span><span className="sm:hidden">Email</span>
+          </a>
+          <a href="https://abidhabib.pro" aria-label="Abid Habib's website" className="inline-flex min-h-8 items-center gap-1.5 transition-colors hover:text-neutral-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-400">
+            <Globe size={12} aria-hidden="true" /><span className="hidden sm:inline">abidhabib.pro</span><span className="sm:hidden">Website</span>
+          </a>
+        </div>
       </footer>
     </div>
   )
