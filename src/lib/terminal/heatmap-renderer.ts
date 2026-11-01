@@ -84,7 +84,7 @@ export function getReactionMarkers(v: HeatmapView) {
 export function drawHeatmap(ctx: CanvasRenderingContext2D, v: HeatmapView) {
   const { width: w, height: h } = v
   ctx.clearRect(0, 0, w, h)
-  ctx.fillStyle = '#070c13'; ctx.fillRect(0, 0, w, h)
+  ctx.fillStyle = '#0b0b0b'; ctx.fillRect(0, 0, w, h)
   if (w < 130 || h < 90 || v.mid <= 0) return
   const g = heatmapGeometry(v), { left, top, bottom, right, profile, x, y, start, high, low } = g
   const visible = v.columns.filter(c => c.t >= start - 3000 && c.t <= v.end)
@@ -161,7 +161,7 @@ export function drawHeatmap(ctx: CanvasRenderingContext2D, v: HeatmapView) {
     if (!lineLabels.some(p => Math.abs(p - cy) < 15)) {
       const label = `${l.label} ${v.formatPrice(l.price)}`
       ctx.font = '10px ui-monospace, monospace'; ctx.textAlign = 'left'
-      ctx.fillStyle = '#070c13dd'; ctx.fillRect(left + 2, cy - 15, ctx.measureText(label).width + 8, 14)
+      ctx.fillStyle = '#0b0b0bdd'; ctx.fillRect(left + 2, cy - 15, ctx.measureText(label).width + 8, 14)
       ctx.fillStyle = l.color; ctx.fillText(label, left + 6, cy - 5); lineLabels.push(cy)
     }
   }
@@ -179,7 +179,7 @@ export function drawHeatmap(ctx: CanvasRenderingContext2D, v: HeatmapView) {
     const text = `≥${age}s${z.replenishments ? ` · +${z.replenishments} refills` : ''}`
     ctx.font = '10px ui-monospace, monospace'; ctx.textAlign = 'right'
     const tw = ctx.measureText(text).width + 10
-    ctx.fillStyle = '#090f18df'; ctx.fillRect(right - tw - 4, cy - 16, tw, 14)
+    ctx.fillStyle = '#0b0b0bdf'; ctx.fillRect(right - tw - 4, cy - 16, tw, 14)
     ctx.fillStyle = color; ctx.fillText(text, right - 8, cy - 6); labelRows.push(cy)
   }
 
@@ -190,7 +190,7 @@ export function drawHeatmap(ctx: CanvasRenderingContext2D, v: HeatmapView) {
       const fraction = tr.buy / tr.usd, angle = -Math.PI / 2 + Math.PI * 2 * fraction
       ctx.shadowBlur = 3; ctx.shadowColor = tr.buy >= tr.sell ? '#22c55e55' : '#ef444455'
       ctx.beginPath(); ctx.arc(tr.x, tr.y, tr.r + 1.5, 0, Math.PI * 2)
-      ctx.fillStyle = '#07111c'; ctx.fill(); ctx.shadowBlur = 0
+      ctx.fillStyle = '#111111'; ctx.fill(); ctx.shadowBlur = 0
       for (const [from, to, fill, edge] of [
         [-Math.PI / 2, angle, '#16c784cc', '#55dfaa'],
         [angle, Math.PI * 1.5, '#eb4d5ccc', '#ff8790'],
@@ -211,7 +211,7 @@ export function drawHeatmap(ctx: CanvasRenderingContext2D, v: HeatmapView) {
       const text = usd(tr.usd), tw = ctx.measureText(text).width + 12
       const tx = Math.min(right - tw / 2, Math.max(left + tw / 2, tr.x)), ty = tr.y - tr.r - 14
       if (ty < top + 5 || labels.some(l => Math.abs(l.x - tx) < (l.w + tw) / 2 + 6 && Math.abs(l.y - ty) < 20)) continue
-      ctx.fillStyle = '#07111ce8'; ctx.fillRect(tx - tw / 2, ty - 9, tw, 18)
+      ctx.fillStyle = '#111111e8'; ctx.fillRect(tx - tw / 2, ty - 9, tw, 18)
       ctx.fillStyle = '#f1f5f9'; ctx.fillText(text, tx, ty + 4)
       labels.push({ x: tx, y: ty, w: tw })
     }
@@ -225,7 +225,7 @@ export function drawHeatmap(ctx: CanvasRenderingContext2D, v: HeatmapView) {
     else ctx.lineTo(x(col.t), y(col.mid))
     previous = col.t
   }
-  ctx.strokeStyle = '#08101b'; ctx.lineWidth = v.showQuotes ? 1.5 : 4; ctx.stroke()
+  ctx.strokeStyle = '#0c0c0c'; ctx.lineWidth = v.showQuotes ? 1.5 : 4; ctx.stroke()
   ctx.strokeStyle = v.showQuotes ? '#e2e8f055' : '#e2e8f0'; ctx.lineWidth = v.showQuotes ? 0.75 : 1.7; ctx.stroke()
   const midY = y(v.mid)
   ctx.setLineDash([4, 5]); ctx.strokeStyle = '#e2e8f04d'; ctx.lineWidth = 1
@@ -242,7 +242,7 @@ export function drawHeatmap(ctx: CanvasRenderingContext2D, v: HeatmapView) {
   }
   for (const e of getReactionMarkers(v)) {
     const color = reactionColors[e.kind]
-    ctx.fillStyle = '#101827'; ctx.strokeStyle = color; ctx.lineWidth = 1.5
+    ctx.fillStyle = '#181818'; ctx.strokeStyle = color; ctx.lineWidth = 1.5
     ctx.beginPath(); ctx.rect(e.x - 8, e.y - 8, 16, 16); ctx.fill(); ctx.stroke()
     ctx.font = 'bold 10px ui-monospace, monospace'; ctx.textAlign = 'center'; ctx.fillStyle = color
     ctx.fillText(reactionCodes[e.kind], e.x, e.y + 3.5)
@@ -256,7 +256,7 @@ export function drawHeatmap(ctx: CanvasRenderingContext2D, v: HeatmapView) {
   }
   if (midY > top && midY < bottom) {
     ctx.fillStyle = '#e2e8f0'; ctx.fillRect(right + 4, midY - 10, 78, 20)
-    ctx.font = '600 10px ui-monospace, monospace'; ctx.fillStyle = '#0f172a'
+    ctx.font = '600 10px ui-monospace, monospace'; ctx.fillStyle = '#181818'
     ctx.fillText(v.formatPrice(v.mid), right + 10, midY + 3)
   }
   const tagged: number[] = [midY]
@@ -264,7 +264,7 @@ export function drawHeatmap(ctx: CanvasRenderingContext2D, v: HeatmapView) {
     const cy = y(l.price)
     if (l.price < low || l.price > high || tagged.some(p => Math.abs(p - cy) < 18)) continue
     ctx.fillStyle = l.color; ctx.fillRect(right + 4, cy - 8, 78, 16)
-    ctx.font = '10px ui-monospace, monospace'; ctx.textAlign = 'left'; ctx.fillStyle = '#07111c'
+    ctx.font = '10px ui-monospace, monospace'; ctx.textAlign = 'left'; ctx.fillStyle = '#111111'
     ctx.fillText(v.formatPrice(l.price), right + 10, cy + 3); tagged.push(cy)
   }
   ctx.font = '10px ui-monospace, monospace'
@@ -275,7 +275,7 @@ export function drawHeatmap(ctx: CanvasRenderingContext2D, v: HeatmapView) {
   }
   if (profile && latest) {
     const bx = right + 86
-    ctx.fillStyle = '#0d1522'; ctx.fillRect(bx, top, profile, bottom - top)
+    ctx.fillStyle = '#151515'; ctx.fillRect(bx, top, profile, bottom - top)
     const binned = [binnedBook(latest, v.step).bid, binnedBook(latest, v.step).ask]
     const max = Math.max(1, ...binned.flatMap(m => [...m].filter(([p]) => p >= low && p <= high).map(([, n]) => n)))
     for (let side = 0; side < 2; side++) for (const [p, n] of binned[side]) {
@@ -291,7 +291,7 @@ export function drawHeatmap(ctx: CanvasRenderingContext2D, v: HeatmapView) {
   if (g.cvdHeight) {
     const series = cumulativeFlow(v.trades, start, v.end, Math.max(1000, v.span / 120))
     const yTop = bottom + 16, yBottom = h - 34, middle = (yTop + yBottom) / 2
-    ctx.fillStyle = '#080f18'; ctx.fillRect(left, yTop - 8, right - left, yBottom - yTop + 9)
+    ctx.fillStyle = '#0e0e0e'; ctx.fillRect(left, yTop - 8, right - left, yBottom - yTop + 9)
     ctx.font = '9px ui-monospace, monospace'; ctx.textAlign = 'left'; ctx.fillStyle = '#8392a8'; ctx.fillText('CVD · chart-window buy − sell', left + 4, yTop)
     const maxDelta = Math.max(1, ...series.map(s => Math.abs(s.delta))), maxCvd = Math.max(1, ...series.map(s => Math.abs(s.cvd)))
     ctx.strokeStyle = '#ffffff16'; ctx.beginPath(); ctx.moveTo(left, middle); ctx.lineTo(right, middle); ctx.stroke()
@@ -320,10 +320,10 @@ export function drawHeatmapCursor(ctx: CanvasRenderingContext2D, v: HeatmapView)
   const t = activeColumn ? v.end : g.start + (p.x - g.left) / (g.right - g.left) * v.span
   ctx.font = '10px ui-monospace, monospace'
   ctx.fillStyle = '#cbd5e1'; ctx.fillRect(g.right + 4, p.y - 9, 78, 18)
-  ctx.fillStyle = '#0b1220'; ctx.textAlign = 'left'; ctx.fillText(v.formatPrice(price), g.right + 10, p.y + 3)
+  ctx.fillStyle = '#151515'; ctx.textAlign = 'left'; ctx.fillText(v.formatPrice(price), g.right + 10, p.y + 3)
   const tx = Math.max(g.left + 31, Math.min(g.right - 31, p.x))
   ctx.fillStyle = '#cbd5e1'; ctx.fillRect(tx - 31, v.height - 25, 62, 18)
-  ctx.fillStyle = '#0b1220'; ctx.textAlign = 'center'
+  ctx.fillStyle = '#151515'; ctx.textAlign = 'center'
   ctx.fillText(new Date(t).toISOString().slice(11, 19), tx, v.height - 12)
   ctx.restore()
 }

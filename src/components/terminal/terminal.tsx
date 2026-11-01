@@ -66,7 +66,7 @@ export default function Terminal() {
   const showRail = railOpen && RAIL_TABS.has(tab)
 
   return (
-    <div className="dark flex h-[100dvh] flex-col overflow-hidden bg-background text-foreground">
+    <div className="trading-terminal dark flex h-[100dvh] flex-col overflow-hidden bg-background text-foreground">
       <TopBar status={status} />
       <TabBar />
       <main className="flex min-h-0 flex-1" role="main">
@@ -74,13 +74,13 @@ export default function Terminal() {
           <ActivePanel tab={tab} />
         </section>
         {showRail && (
-          <aside className="hidden w-[248px] shrink-0 border-l border-border/60 bg-[#0d1017] xl:block" aria-label="Order book and last trades">
+          <aside className="hidden w-[248px] shrink-0 border-l border-border/60 bg-[#111111] xl:block" aria-label="Order book and last trades">
             <OrderBookRail />
           </aside>
         )}
       </main>
       <MarketPicker />
-      <footer className="flex h-6 shrink-0 items-center gap-3 overflow-x-auto border-t border-border/60 bg-[#0d1017] px-3 text-[10px] text-muted-foreground" role="contentinfo">
+      <footer className="flex h-6 shrink-0 items-center gap-3 overflow-x-auto border-t border-border/60 bg-[#111111] px-3 text-[10px] text-muted-foreground" role="contentinfo">
         <span>keys: <kbd className="rounded bg-muted px-1 font-mono">1–9,0</kbd> tabs · <kbd className="rounded bg-muted px-1 font-mono">G</kbd> guide · {tab === 'bubbles' ? 'C: Crypto Bubbles · use the controls inside the view' : tab === 'heatmap' ? 'Columns menu: aligned book & tape' : tab === 'whales' ? 'Whales: hover / tap bubbles · Home: live' : <><kbd className="rounded bg-muted px-1 font-mono">B</kbd> book rail</>}</span>
         <span className="hidden sm:inline">{tab === 'bubbles' ? 'source: cryptobubbles.net · independent market feed' : 'sources: Binance spot & futures · Deribit · alternative.me'}</span>
         <span className="ml-auto hidden shrink-0 xl:inline">estimates: liquidation map, L3-style events — see Guide</span>

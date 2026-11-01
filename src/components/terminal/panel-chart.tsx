@@ -19,13 +19,14 @@ import { PanelHeader, SourceBadge } from './panel-kit'
 import { cn } from '@/lib/utils'
 import type { Candle } from '@/lib/terminal/types'
 
-const BG = '#0b0d12'
+const BG = '#0c0c0c'
 
 interface HLine { id: number; price: number }
 
 export default function ChartPanel() {
   const { symbol, timeframe, setTimeframe } = useTerminal()
   const meta = metaFor(symbol)
+  const [mobileIndicators, setMobileIndicators] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)
   const mainRef = useRef<HTMLDivElement>(null)
   const rsiWrapRef = useRef<HTMLDivElement>(null)
@@ -365,13 +366,15 @@ export default function ChartPanel() {
         right={
           <>
             <TimeframePicker value={timeframe} onChange={id => setTimeframe(id as typeof timeframe)} />
+            <button type="button" aria-expanded={mobileIndicators} aria-controls="chart-indicators" onClick={() => setMobileIndicators(v => !v)} className="min-h-8 rounded border border-white/10 bg-neutral-800 px-2 text-[11px] text-neutral-300 sm:hidden">Indicators</button>
+            <div id="chart-indicators" className={cn('flex flex-wrap items-center gap-2 sm:contents', !mobileIndicators && 'max-sm:hidden')}>
             {([
               ['ema20', 'EMA20'], ['ema50', 'EMA50'], ['bb', 'BB'], ['vwap', 'VWAP'],
               ['vol', 'Vol'], ['rsi', 'RSI'], ['cvd', 'CVD'], ['whales', 'Whales'], ['levels', 'Levels'],
             ] as const).map(([k, label]) => (
               <button key={k} onClick={() => setInd((s) => ({ ...s, [k]: !s[k] }))}
                 className={cn('rounded border px-1.5 py-1 text-[10px] font-medium',
-                  ind[k] ? 'border-[#4da3ff]/50 bg-[#4da3ff]/15 text-[#4da3ff]' : 'border-border text-muted-foreground hover:text-foreground')}>
+                  ind[k] ? 'border-white/20 bg-white/10 text-neutral-100' : 'border-border text-muted-foreground hover:text-foreground')}>
                 {label}
               </button>
             ))}
@@ -386,6 +389,7 @@ export default function ChartPanel() {
                 Clear {hLines.length}
               </button>
             )}
+            </div>
           </>
         }
       />
@@ -442,7 +446,7 @@ export default function ChartPanel() {
           )}
         </div>
         {!ready && (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#0b0d12]/70 text-xs text-muted-foreground">
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#0c0c0c]/70 text-xs text-muted-foreground">
             Loading candles…
           </div>
         )}

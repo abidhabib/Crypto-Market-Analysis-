@@ -26,7 +26,7 @@ export function drawOrderFlowColumns(ctx: CanvasRenderingContext2D, v: HeatmapVi
   ctx.save()
   for (const col of layout.shown) {
     const x = g.right + 86 + col.offset, w = col.width
-    ctx.fillStyle = '#0a111a'; ctx.fillRect(x, 0, w, g.bottom + 1)
+    ctx.fillStyle = '#111111'; ctx.fillRect(x, 0, w, g.bottom + 1)
     ctx.strokeStyle = '#ffffff12'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, g.bottom); ctx.stroke()
     ctx.font = '10px ui-monospace, monospace'
     if (col.id === 'tape') {

@@ -120,3 +120,25 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Terminal chrome stays neutral; colour belongs to market data. */
+.trading-terminal {
+  --background: #0c0c0c;
+  --card: #141414;
+  --muted: #242424;
+  --muted-foreground: #909090;
+  --border: #2a2a2a;
+  --popover: #191919;
+  color-scheme: dark;
+}
+.trading-terminal > header,
+.trading-terminal [data-testid="heatmap-quality"] {
+  background: #111111;
+}
+@media (max-width: 639px) {
+  .trading-terminal > footer { display: none; }
+  .trading-terminal [data-testid="heatmap-quality"] { padding: 6px 12px; }
+  .trading-terminal [data-testid="heatmap-quality"] > summary { gap: 4px 12px; }
+  .trading-terminal [data-testid="heatmap-quality"] > summary > span:nth-child(2),
+  .trading-terminal [data-testid="heatmap-quality"] > summary > span:nth-child(4) { display: none; }
+}

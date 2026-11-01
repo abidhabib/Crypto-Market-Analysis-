@@ -5,7 +5,7 @@ import { fmtCompact, fmtPrice } from './format'
 import { whaleRadius, type WhaleAnalysis, type WhaleEvent } from './whales-model'
 
 export const WHALE_BUY = '#22c58b', WHALE_SELL = '#f15766'
-const DIM = '#78889e', GRID = '#19232e', BG = '#0a1018'
+const DIM = '#78889e', GRID = '#252525', BG = '#0c0c0c'
 export interface WhalesView {
   width: number; height: number; start: number; end: number; low: number; high: number; timeframe: number; tick: number; step: number
   candles: readonly Candle[]; analysis: WhaleAnalysis; averages: boolean; zones: boolean; profile: boolean; allProfile: boolean
@@ -47,7 +47,7 @@ function priceLine(ctx: CanvasRenderingContext2D, v: WhalesView, price: number, 
   let baseline = y - 4
   while (occupied.some(previous => Math.abs(previous - baseline) < 15) && baseline + 15 < p.mainBottom - 4) baseline += 15
   occupied.push(baseline)
-  ctx.fillStyle = '#0a1018ef'; ctx.fillRect(p.left + 2, baseline - 11, Math.min(p.right - p.left - 10, ctx.measureText(text).width + 12), 14)
+  ctx.fillStyle = '#0c0c0cef'; ctx.fillRect(p.left + 2, baseline - 11, Math.min(p.right - p.left - 10, ctx.measureText(text).width + 12), 14)
   label(ctx, text, p.left + 7, baseline, color)
 }
 
@@ -129,11 +129,11 @@ export function drawWhales(ctx: CanvasRenderingContext2D, v: WhalesView) {
     if (y < p.top + 10 || y > p.mainBottom - 5) continue
     occupied.push({ x: b.x, y })
     const text = fmtCompact(b.event.total, '$'), width = ctx.measureText(text).width
-    ctx.fillStyle = '#0a1018de'; ctx.fillRect(b.x - width / 2 - 3, y - 10, width + 6, 13)
+    ctx.fillStyle = '#0c0c0cde'; ctx.fillRect(b.x - width / 2 - 3, y - 10, width + 6, 13)
     label(ctx, text, b.x, y, '#e1eaf1', 'center')
   }
   for (const z of zoneLabels) {
-    ctx.fillStyle = '#0a1018eb'; ctx.fillRect(p.right - z.width - 12, z.baseline - 10, z.width + 8, 13)
+    ctx.fillStyle = '#0c0c0ceb'; ctx.fillRect(p.right - z.width - 12, z.baseline - 10, z.width + 8, 13)
     label(ctx, z.text, p.right - 8, z.baseline, z.color, 'right')
   }
   ctx.restore()
