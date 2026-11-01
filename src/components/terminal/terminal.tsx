@@ -81,14 +81,14 @@ export default function Terminal() {
         )}
       </main>
       <MarketPicker />
-      <footer className="flex h-8 shrink-0 items-center justify-between gap-2 border-t border-white/[0.08] bg-[#111111] px-3 font-mono text-[10px] text-neutral-500" role="contentinfo">
-        <span className="shrink-0 text-neutral-400">Abid Habib</span>
+      <footer className="flex h-8 shrink-0 items-center justify-center gap-3 border-t border-amber-400/15 bg-[#111111] px-3 font-mono text-[10px] text-neutral-400 sm:gap-5" role="contentinfo">
+        <span className="shrink-0 font-medium text-amber-300">Abid Habib</span>
         <div className="flex items-center gap-3 sm:gap-5">
           <a href="mailto:abid.habib@outlook.com" aria-label="Email Abid Habib at abid.habib@outlook.com" title="abid.habib@outlook.com" className="inline-flex min-h-8 items-center gap-1.5 transition-colors hover:text-neutral-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-400">
-            <Mail size={12} aria-hidden="true" /><span className="hidden sm:inline">abid.habib@outlook.com</span><span className="sm:hidden">Email</span>
+            <Mail size={12} className="text-amber-400/80" aria-hidden="true" /><span className="hidden sm:inline">abid.habib@outlook.com</span><span className="sm:hidden">Email</span>
           </a>
           <a href="https://abidhabib.pro" aria-label="Abid Habib's website" className="inline-flex min-h-8 items-center gap-1.5 transition-colors hover:text-neutral-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-400">
-            <Globe size={12} aria-hidden="true" /><span className="hidden sm:inline">abidhabib.pro</span><span className="sm:hidden">Website</span>
+            <Globe size={12} className="text-amber-400/80" aria-hidden="true" /><span className="hidden sm:inline">abidhabib.pro</span><span className="sm:hidden">Website</span>
           </a>
         </div>
       </footer>
