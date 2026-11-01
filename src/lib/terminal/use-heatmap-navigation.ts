@@ -5,7 +5,7 @@ import { panViewport, zoomViewport, type MapBounds, type MapViewport } from './h
 
 /** Native non-passive wheel handling keeps trackpad pinch inside the chart. */
 export function useHeatmapNavigation(canvas: React.RefObject<HTMLCanvasElement | null>, viewport: MapViewport,
-  bounds: MapBounds, plot: { left: number; top: number; right: number; bottom: number }, onChange: (v: MapViewport) => void) {
+  bounds: MapBounds, plot: { left: number; top: number; right: number; bottom: number }, onChange: (v: MapViewport) => void, wheelAxis: 'time' | 'both' = 'time') {
   const current = useRef({ viewport, bounds, plot, onChange })
   const [dragging, setDragging] = useState(false)
   useEffect(() => { current.current = { viewport, bounds, plot, onChange } })
@@ -38,7 +38,7 @@ export function useHeatmapNavigation(canvas: React.RefObject<HTMLCanvasElement |
         commit(panViewport(v, c.bounds, -e.deltaX * unit / (g.right - g.left), 0))
       } else {
         const factor = Math.exp(Math.max(-0.35, Math.min(0.35, e.deltaY * unit * (e.ctrlKey ? 0.012 : 0.003))))
-        commit(zoomViewport(v, c.bounds, factor, (p.x - g.left) / (g.right - g.left), (p.y - g.top) / (g.bottom - g.top), e.shiftKey || onPriceAxis ? 'price' : e.ctrlKey || e.metaKey ? 'both' : 'time'))
+        commit(zoomViewport(v, c.bounds, factor, (p.x - g.left) / (g.right - g.left), (p.y - g.top) / (g.bottom - g.top), e.shiftKey || onPriceAxis ? 'price' : e.ctrlKey || e.metaKey ? 'both' : wheelAxis))
       }
     }
     const down = (e: PointerEvent) => {
@@ -68,6 +68,6 @@ export function useHeatmapNavigation(canvas: React.RefObject<HTMLCanvasElement |
       el.removeEventListener('wheel', wheel); el.removeEventListener('pointerdown', down); el.removeEventListener('pointermove', move)
       el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up); el.removeEventListener('lostpointercapture', up)
     }
-  }, [canvas])
+  }, [canvas, wheelAxis])
   return dragging
 }

@@ -47,7 +47,7 @@ function ActivePanel({ tab }: { tab: TabId }) {
   }
 }
 
-const RAIL_TABS = new Set<TabId>(['chart', 'footprint', 'profile', 'tape', 'l3', 'signals'])
+const RAIL_TABS = new Set<TabId>(['chart', 'profile', 'tape', 'l3', 'signals'])
 
 export default function Terminal() {
   const { tab, setTab, railOpen, toggleRail } = useTerminal()

@@ -79,7 +79,7 @@ export default function TopBar({ status }: { status: 'connecting' | 'live' | 'of
         <span className="hidden font-mono text-[11px] text-muted-foreground md:block">
           {clock ? new Date(clock).toISOString().slice(11, 19) + ' UTC' : '—'}
         </span>
-        {tab !== 'heatmap' && tab !== 'whales' && tab !== 'bubbles' && <button
+        {tab !== 'footprint' && tab !== 'heatmap' && tab !== 'whales' && tab !== 'bubbles' && <button
           onClick={toggleRail}
           aria-label="Toggle order book rail"
           title="Toggle order book rail (B)"

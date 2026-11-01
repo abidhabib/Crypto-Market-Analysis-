@@ -16,7 +16,13 @@ The replacement separates the pure calculation model from collection and renderi
 - POC is the row with maximum combined **coin** volume. Equal maxima resolve to the lowest price bin. Switching display to USDT does not redefine POC or imbalances.
 - A buy imbalance compares buys at row `i` against sells at `i−1`. A sell imbalance compares sells at `i` against buys at `i+1`. The ratio defaults to 3. The dominant-side minimum quantity is configurable. Missing/zero opposing cells are excluded rather than treated as infinite ratios.
 - A stack requires adjacent bin indices with the same imbalance side; skipped price bins break the run.
-- Visible CVD, volume and buy share cover exactly the grid's six-bar window. CVD is an observed-window sum, not a session total. The grid scrolls on mobile; all six columns belong to that window.
+- Visible CVD, volume and buy share cover the complete candles intersecting the current chart time window. CVD is an observed-window sum, not a session total, and resets when the leftmost visible candle changes. The per-candle volume, delta, delta-percent and CVD strip uses that same time axis. These statistics remain in coin units even when footprint row text is switched to USDT.
+
+## Chart interaction
+
+The price-aligned canvas shows actual open/high/low/close marks beside each candle's fixed price bins. Zoomed-out footprints show volume shading; sell/buy numbers appear only when there is enough pixel space to read them. Zoom changes the camera, never the tick grouping or totals. Gold outlines mark per-candle POC; the selected candle's POC extends across the chart. None of these lines claims to be a complete session POC.
+
+Wheel and two-finger pinch zoom both axes around the pointer; Shift-wheel or the price axis zooms price only. Horizontal trackpad gestures and drag pan the view. Zoom/pan fixes a snapshot so historical inspection does not drift as live trades arrive. Fit resets the camera on that snapshot; Live, Resume or Home restores the live camera. Click/tap selects a candle for the evidence sidebar; hover/tap reveals row values and recording quality. A collapsible live book is hidden while inspecting a snapshot to avoid presenting current depth as historical evidence.
 
 ## Quality and interpretation
 
