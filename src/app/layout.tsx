@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import Script from "next/script";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 
@@ -53,6 +54,15 @@ export default function RootLayout({
       >
         {children}
         <Toaster />
+        {process.env.NODE_ENV === "production" && (
+          <Script
+            id="cloudflare-web-analytics"
+            type="module"
+            src="https://static.cloudflareinsights.com/beacon.min.js"
+            data-cf-beacon={JSON.stringify({ token: "fd05508544d343ada7227c4e4b054f95" })}
+            strategy="afterInteractive"
+          />
+        )}
       </body>
     </html>
   );
