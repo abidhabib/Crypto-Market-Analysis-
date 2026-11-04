@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun --hot index.ts"
+    "dev": "node init && bun --hot index.ts"
   },
   "dependencies": {
     "socket.io": "^4.8.4"
