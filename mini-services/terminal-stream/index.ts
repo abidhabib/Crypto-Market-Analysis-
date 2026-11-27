@@ -27,7 +27,7 @@ import { createServer } from 'http'
 import { Server } from 'socket.io'
 import { snapshotHistory } from './snapshot-history.ts'
 
-const PORT = 3031
+const PORT = Number(process.env.PORT) || 3031
 const httpServer = createServer()
 const io = new Server(httpServer, {
   path: '/',
