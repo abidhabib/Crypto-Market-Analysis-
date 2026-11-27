@@ -4,7 +4,7 @@ import { getStream } from '@/lib/terminal/stream-client'
 import { usePoll } from '@/lib/terminal/hooks'
 import { useTerminal } from '@/lib/terminal/store'
 import { symbolMeta, GREEN, RED } from '@/lib/terminal/constants'
-import { fmtPrice, fmtCompact, fmtUsd, fmtTime } from '@/lib/terminal/format'
+import { fmtPrice, fmtCompact, fmtUsd, fmtTime, fmtQty } from '@/lib/terminal/format'
 import { cn } from '@/lib/utils'
 
 /** Persistent right rail: aggregated depth ladder + last trades. */
@@ -18,7 +18,9 @@ export default function OrderBookRail() {
     if (!ladder || !ladder.bids.length || !ladder.asks.length) return null
     // Top-of-book comes from the SAME source as the header ticker — the
     // bookTicker-fed bookTop — so the rail mid/spread can never disagree
-    // with the header. The ladder rows below still render the full book.
+    // with the header. Displayed mid/spread come ONLY from bookTop; the
+    // ladder top is used solely to window the rows when bookTop has not
+    // arrived yet (displayed mid/spread then honestly read —).
     const top = s.bookTop && s.bookTop.b > 0 && s.bookTop.a > 0 ? s.bookTop : null
     const mid = top ? (top.b + top.a) / 2 : (ladder.bids[0].p + ladder.asks[0].p) / 2
     const spanPct = 0.0012 // ±12bps window
@@ -38,7 +40,7 @@ export default function OrderBookRail() {
     const bidNotional = bids.reduce((a, r) => a + r[1] * r[0], 0)
     const askNotional = asks.reduce((a, r) => a + r[1] * r[0], 0)
     const last = s.trades[s.trades.length - 1] ?? null
-    return { mid, spread: top ? top.a - top.b : ladder.asks[0].p - ladder.bids[0].p, asks, bids, maxQ, bidNotional, askNotional, last }
+    return { mid, displayMid: top ? mid : null, spread: top ? top.a - top.b : null, asks, bids, maxQ, bidNotional, askNotional, last }
   }, 400)
 
   const trades = usePoll(() => getStream().trades.slice(-14).reverse(), 500)
@@ -51,7 +53,7 @@ export default function OrderBookRail() {
     <div className="flex h-full flex-col min-h-0 text-[11px]" data-testid="order-book-rail">
       <div className="flex items-center justify-between border-b border-border/60 px-3 py-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
         <span>Order book</span>
-        <span className="font-mono normal-case">{data ? `spread ${fmtPrice(data.spread, meta.tick)}` : '—'}</span>
+        <span className="font-mono normal-case">{data && data.spread != null ? `spread ${fmtPrice(data.spread, meta.tick)}` : '—'}</span>
       </div>
       {data ? (
         <>
@@ -61,7 +63,7 @@ export default function OrderBookRail() {
             ))}
             <div className="my-1 flex items-center justify-between rounded bg-muted/50 px-2 py-1">
               <span className="font-mono font-bold" style={{ color: data.last && !data.last.m ? GREEN : RED }}>
-                {fmtPrice(data.mid, meta.tick)}
+                {data.displayMid != null ? fmtPrice(data.displayMid, meta.tick) : '—'}
               </span>
               <span className="text-[9px] text-muted-foreground">mid</span>
             </div>
@@ -90,7 +92,7 @@ export default function OrderBookRail() {
           <div key={t.a} className="flex items-center justify-between px-3 py-[3px] font-mono">
             <span className={cn('w-8 text-[9px] font-bold', t.m ? 'text-[#ea3943]' : 'text-[#16c784]')}>{t.m ? 'S' : 'B'}</span>
             <span className="flex-1 text-right">{fmtPrice(t.p, meta.tick)}</span>
-            <span className="w-14 text-right text-muted-foreground">{fmtCompact(t.q)}</span>
+            <span className="w-14 text-right text-muted-foreground">{fmtQty(t.q)}</span>
             <span className="w-12 text-right text-[9px] text-muted-foreground">{fmtTime(t.t)}</span>
           </div>
         ))}
@@ -108,7 +110,7 @@ function Row({ p, q, maxQ, side, meta }: { p: number; q: number; maxQ: number; s
         style={{ width: `${w}%` }}
       />
       <span className={cn('relative z-10', side === 'bid' ? 'text-[#16c784]' : 'text-[#ea3943]')}>{fmtPrice(p, meta.tick)}</span>
-      <span className="relative z-10 text-muted-foreground">{fmtCompact(q)}</span>
+      <span className="relative z-10 text-muted-foreground">{fmtQty(q)}</span>
     </div>
   )
 }

@@ -13,7 +13,7 @@ import { getStream } from '@/lib/terminal/stream-client'
 import { usePoll } from '@/lib/terminal/hooks'
 import { metaFor } from '@/lib/terminal/constants'
 import { insights, marketSummary, levels, regime, type Insight, type InsightCat } from '@/lib/terminal/analytics'
-import { liveMid } from '@/lib/terminal/shared-metrics'
+import { liveMid, sharedRsi1m, RSI_BASIS } from '@/lib/terminal/shared-metrics'
 import { fmtPrice, fmtCompact, fmtTime } from '@/lib/terminal/format'
 import { PanelHeader, SourceBadge, StatCard } from './panel-kit'
 import { cn } from '@/lib/utils'
@@ -46,6 +46,7 @@ export default function InsightsPanel() {
   const summary = marketSummary()
   const l = levels()
   const r = regime()
+  const rsi1m = sharedRsi1m()
   const mid = liveMid() ?? r?.price ?? 0
   const filtered = cat === 'all' ? feed : feed.filter((i) => i.cat === cat)
 
@@ -81,6 +82,7 @@ export default function InsightsPanel() {
           <StatCard label="24h high" value={fmtPrice(l.sessionHigh, meta.tick)} />
           <StatCard label="24h low" value={fmtPrice(l.sessionLow, meta.tick)} />
           <StatCard label="Regime" value={r?.label ?? '—'} sub={r ? `strength ${r.strength}/100` : undefined} />
+          <StatCard label="RSI-14 (1m)" value={rsi1m != null ? rsi1m.toFixed(1) : '—'} tone={rsi1m != null ? (rsi1m >= 70 ? 'up' : rsi1m <= 30 ? 'down' : undefined) : undefined} sub={RSI_BASIS} />
         </div>
         {(l.wallsAbove.length || l.wallsBelow.length) ? (
           <div className="mt-3 flex flex-wrap gap-1.5">

@@ -109,6 +109,9 @@ interface SymbolState {
   bookTopAt: number           // last bookTicker receipt (bookTop source freshness)
   recentIds: Set<number>      // recent aggTrade ids (REST/WS seam dedupe)
   snapshotPushed: boolean     // a full snapshot was broadcast after warm-up
+  snapCache: ReturnType<typeof snapshot> | null  // prebuilt snapshot for instant subscribe replies
+  snapCacheAt: number
+  warmUntil: number           // keep the cache fresh briefly after the last subscriber leaves
   // timers
   timers: ReturnType<typeof setInterval>[]
   lastSentTradeId: number
@@ -127,6 +130,7 @@ const state = (symbol: string): SymbolState => {
       trades: [], klines: [], lastDepthPayload: '', heatCols: [], liqs: [],
       lv: new Map(), lastTradeAtP: new Map(), walls: [], pulls: [], sweeps: [], icebergs: [],
       medianNotional: 0, bookTopAt: 0, recentIds: new Set(), snapshotPushed: false,
+      snapCache: null, snapCacheAt: 0, warmUntil: 0,
       timers: [], lastSentTradeId: 0, lastKlineSent: 0,
     }
     S.set(symbol, s)
@@ -538,17 +542,29 @@ async function ensureSymbol(symbol: string) {
     if (wi >= 0) warmOrder.splice(wi, 1)
     return
   }
-  if (s.valid === undefined) {
-    const v = await validateSymbol(symbol)
-    s.valid = v === 'unknown' ? true : v
-  }
-  if (!s.valid) {
+  if (s.valid === false) {
     s.status = 'offline'
     s.lastError = 'unsupported symbol'
     broadcastStatus(s)
     return
   }
   s.status = 'connecting'
+  // Validation runs in PARALLEL with warm-up: awaiting the exchangeInfo
+  // REST call before opening the WebSockets added seconds (or a full
+  // timeout under load / REST bans) to every cold subscribe. Only an
+  // explicit invalid-symbol answer tears the symbol down again.
+  if (s.valid === undefined) {
+    void validateSymbol(symbol).then((v) => {
+      s.valid = v === 'unknown' ? true : v
+      if (!s.valid) {
+        s.status = 'offline'
+        s.lastError = 'unsupported symbol'
+        s.spotWs?.close(); s.futWs?.close()
+        s.timers.forEach(clearInterval); s.timers = []
+        broadcastStatus(s)
+      }
+    })
+  }
   openSpotWs(s)
   openFutWs(s)
   // History loads in the BACKGROUND: the subscribe path must not wait on two
@@ -657,6 +673,7 @@ function releaseSymbol(symbol: string) {
   if (!s) return
   s.streams = Math.max(0, s.streams - 1)
   if (s.streams === 0 && s.timers.length) {
+    s.warmUntil = Date.now() + 120_000 // snapshot cache stays fresh 2 more minutes
     if (!warmOrder.includes(symbol)) warmOrder.push(symbol)
     evictWarm(symbol)
     console.log(`[terminal-stream] keeping ${symbol} warm (history keeps building)`)
@@ -675,7 +692,23 @@ function snapshotHeatCols(s: SymbolState): HeatCol[] {
 function broadcastSnapshot(s: SymbolState) {
   if (s.streams <= 0) return
   s.snapshotPushed = true
-  io.emit('snapshot', snapshot(s))
+  s.snapCache = snapshot(s)
+  s.snapCacheAt = Date.now()
+  io.emit('snapshot', s.snapCache)
+}
+
+/**
+ * The per-symbol CACHED snapshot: maintained continuously (see the 2s
+ * cache loop) for every symbol with a subscriber — and for 2 minutes
+ * after the last one leaves — so a new subscriber is answered instantly
+ * instead of waiting for a history rebuild under load.
+ */
+function cachedSnapshot(s: SymbolState) {
+  if (!s.snapCache || Date.now() - s.snapCacheAt > 4000) {
+    s.snapCache = snapshot(s)
+    s.snapCacheAt = Date.now()
+  }
+  return s.snapCache
 }
 
 function snapshot(s: SymbolState) {
@@ -715,31 +748,53 @@ function broadcastStatus(s: SymbolState) {
 // ---------------------------------------------------------------- socket api
 io.on('connection', (socket) => {
   let current: string | null = null
-  socket.on('subscribe', async (msg: { symbol?: string }) => {
+  socket.on('subscribe', async (msg: { symbol?: string; refresh?: boolean }) => {
     const symbol = (msg?.symbol || 'BTCUSDT').toUpperCase().replace(/[^A-Z0-9]/g, '')
     if (!/^[A-Z0-9]{5,20}$/.test(symbol) || !symbol.endsWith('USDT')) {
       socket.emit('status', { symbol, status: 'offline', error: 'unsupported symbol' })
       return
     }
-    if (current === symbol) return
+    if (current === symbol) {
+      // A refresh re-subscribe (client watchdog: connected but no snapshot
+      // yet) re-sends the cached snapshot instead of being ignored.
+      if (msg?.refresh) {
+        const s = state(symbol)
+        socket.emit('snapshot', cachedSnapshot(s))
+        socket.emit('status', { symbol, status: s.status, error: s.lastError ?? null })
+      }
+      return
+    }
     if (current) releaseSymbol(current)
     current = symbol
     const s = state(symbol)
-    // Answer IMMEDIATELY with whatever is already buffered (warm symbols have
-    // full history), then warm the symbol up in the background — history and
-    // book readiness broadcast a fresh full snapshot when they land. The old
-    // flow awaited validation + history before ANY snapshot, which is why the
-    // page sat on CONNECTING for minutes on a cold symbol.
+    // Answer IMMEDIATELY with the cached snapshot (warm symbols have full
+    // history), then warm the symbol up in the background — history and
+    // book readiness broadcast a fresh full snapshot when they land. The
+    // old flow awaited validation + history before ANY snapshot, which is
+    // why the page sat on CONNECTING for minutes on a cold symbol.
     socket.emit('status', { symbol, status: s.status, error: s.lastError ?? null })
-    socket.emit('snapshot', snapshot(s))
+    socket.emit('snapshot', cachedSnapshot(s))
     void ensureSymbol(symbol).then(() => {
       if (!socket.connected || current !== symbol) return
-      socket.emit('snapshot', snapshot(s))
+      socket.emit('snapshot', cachedSnapshot(s))
       socket.emit('status', { symbol, status: s.status, error: s.lastError ?? null })
     })
   })
   socket.on('disconnect', () => { if (current) releaseSymbol(current) })
 })
+
+// Keep cached snapshots fresh for subscribed (and briefly-warm) symbols so
+// subscribe replies never wait on a rebuild.
+setInterval(() => {
+  for (const s of S.values()) {
+    if (s.streams > 0 || Date.now() < s.warmUntil) {
+      if (Date.now() - s.snapCacheAt > 2000) {
+        s.snapCache = snapshot(s)
+        s.snapCacheAt = Date.now()
+      }
+    }
+  }
+}, 2000)
 
 // high-frequency relay (10Hz)
 setInterval(() => {

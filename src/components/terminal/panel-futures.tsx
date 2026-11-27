@@ -178,8 +178,12 @@ export default function FuturesPanel() {
   }, [liqMap])
 
   const fundingNow = mark?.funding ?? null
-  const fundingHist = hist?.funding ?? []
-  const avg7 = fundingHist.length ? fundingHist.slice(-21).reduce((a, f) => a + f.rate, 0) / Math.min(21, fundingHist.length) : null
+  // 7d average = mean of the last 21 funding settlements (3/day × 7d)
+  // from the history this panel already fetches. Filter non-finite rates
+  // and divide by the SLICE length actually averaged.
+  const fundingHist = (hist?.funding ?? []).filter((f) => isFinite(f.rate))
+  const avg7Slice = fundingHist.slice(-21)
+  const avg7 = avg7Slice.length ? avg7Slice.reduce((a, f) => a + f.rate, 0) / avg7Slice.length : null
 
   return (
     <div className="flex h-full flex-col min-h-0 overflow-y-auto" data-testid="panel-futures">
@@ -199,7 +203,7 @@ export default function FuturesPanel() {
         <StatCard label="Funding (8h)" value={fundingNow != null ? fmtPct(fundingNow * 100, 4) : '—'} tone={fundingNow != null ? (fundingNow >= 0 ? 'down' : 'up') : undefined} sub={fundingNow != null ? `annualised ≈ ${fmtPct(fundingNow * 3 * 365 * 100, 1)} · ${fundingNow >= 0 ? 'longs pay' : 'shorts pay'}` : undefined} />
         <StatCard label="Next funding in" value={mark?.nextFunding ? `${Math.max(0, Math.round((mark.nextFunding - now()) / 60000))}m` : '—'} sub={mark?.nextFunding ? fmtClock(mark.nextFunding) : undefined} />
         <StatCard label="Open interest" value={oi ? fmtCompact(oi.oi) : '—'} sub={oi ? `${fmtUsd(oi.oi * (mark?.p ?? 0))}` : undefined} />
-        <StatCard label="Avg funding (7d)" value={avg7 != null ? fmtPct(avg7 * 100, 4) : '—'} />
+        <StatCard label="Avg funding (7d)" value={avg7 != null ? fmtPct(avg7 * 100, 4) : 'n/a'} sub={avg7 != null ? `mean of last ${avg7Slice.length} settlements` : 'funding history unavailable from upstream'} />
         <StatCard label="Liqs (15m)" value={liqStats.count} sub={`L ${fmtUsd(liqStats.longs)} · S ${fmtUsd(liqStats.shorts)}`} />
       </div>
 

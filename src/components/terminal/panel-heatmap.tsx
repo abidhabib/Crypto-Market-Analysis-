@@ -25,19 +25,39 @@ const buttonClass = 'inline-flex min-h-8 items-center justify-center gap-1.5 rou
 const duration = (ms: number) => ms >= 60000 ? `${(ms / 60000).toFixed(1)}m` : `${Math.max(0, Math.floor(ms / 1000))}s`
 const clock = (ts: number) => new Date(ts).toISOString().slice(11, 19)
 
+// Client-synthesized heat columns, built from the ladder/depth the stream
+// demonstrably delivers (the same book the order-book rail renders). The
+// panel previously depended entirely on server heatCols arriving via the
+// snapshot + ladder-col events; when that path produced nothing in
+// production the panel sat black with no explanation. These columns are
+// marked 'partial' — current snapshots of the live book, not server
+// history — and are merged with any real heatCols by timestamp.
+const synthCols: { t: number; mid: number; bids: { p: number; q: number }[]; asks: { p: number; q: number }[]; bookMode: 'partial'; sourceAt: number }[] = []
+let synthSymbol = ''
+let lastSynthAt = 0
+
 function captureFeed() {
   const s = getStream()
   let heatCols = s.heatCols.slice()
-  // Fallback: if ladder columns are missing or have gone stale while the
-  // live book (ladder/depth) is flowing, synthesize the current column from
-  // the ladder so the map renders the same book the rail shows instead of
-  // sitting blank. Marked 'partial' — it is a current snapshot, not history.
-  const lastCol = heatCols[heatCols.length - 1]
-  if (s.ladder && s.ladder.bids.length && s.ladder.asks.length && (!lastCol || now() - lastCol.t > 3000)) {
+  if (s.symbol !== synthSymbol) { synthSymbol = s.symbol; synthCols.length = 0; lastSynthAt = 0 }
+  const book = s.ladder && s.ladder.bids.length && s.ladder.asks.length
+    ? s.ladder
+    : s.depth && s.depth.bids.length && s.depth.asks.length ? s.depth : null
+  const tNow = now()
+  if (book && tNow - lastSynthAt >= 1000) {
+    lastSynthAt = tNow
     const mid = s.bookTop && s.bookTop.b > 0 && s.bookTop.a > 0
       ? (s.bookTop.b + s.bookTop.a) / 2
-      : (s.ladder.bids[0].p + s.ladder.asks[0].p) / 2
-    heatCols = [...heatCols, { t: now(), mid, bids: s.ladder.bids, asks: s.ladder.asks, bookMode: 'partial' as const, sourceAt: now() }]
+      : (book.bids[0].p + book.asks[0].p) / 2
+    if (isFinite(mid) && mid > 0) {
+      synthCols.push({ t: tNow, mid, bids: book.bids, asks: book.asks, bookMode: 'partial' as const, sourceAt: tNow })
+      if (synthCols.length > 900) synthCols.splice(0, synthCols.length - 900)
+    }
+  }
+  if (synthCols.length) {
+    const seen = new Set(heatCols.map(c => c.t))
+    const extra = synthCols.filter(c => !seen.has(c.t))
+    if (extra.length) heatCols = [...heatCols, ...extra].sort((a, b) => a.t - b.t)
   }
   let plan: ReturnType<typeof decisionLevels> | null = null
   try { plan = decisionLevels() } catch { /* plan lines are optional */ }
@@ -199,7 +219,30 @@ function HeatmapWorkspace({ symbol }: { symbol: string }) {
       const cached = scene.getContext('2d')
       if (!cached) return
       cached.setTransform(dpr, 0, 0, dpr, 0, 0)
-      drawHeatmap(cached, { ...view, pointer: null, bubbles }); lastDraw.current = key
+      try {
+        drawHeatmap(cached, { ...view, pointer: null, bubbles })
+      } catch (e) {
+        // Never leave a black box: if the full renderer throws on some
+        // data shape, fall back to a minimal raster of the same columns.
+        console.error('[heatmap] full draw failed — fallback raster', e)
+        cached.fillStyle = '#0b0b0b'; cached.fillRect(0, 0, size.w, size.h)
+        if (view.mid > 0) {
+          const g = heatmapGeometry(view)
+          for (const col of view.columns) {
+            if (col.t < g.start || col.t > view.end) continue
+            const cx = g.x(col.t)
+            for (const [levels, color] of [[binDepth(col.bids, view.step), 'rgba(56,189,248,0.55)'], [binDepth(col.asks, view.step), 'rgba(245,185,76,0.55)']] as const) {
+              cached.fillStyle = color
+              for (const [price] of levels) {
+                if (price < g.low || price > g.high) continue
+                const cy = g.y(price + view.step / 2)
+                cached.fillRect(cx, cy, 2, Math.max(1, g.y(price - view.step / 2) - cy))
+              }
+            }
+          }
+        }
+      }
+      lastDraw.current = key
     }
     const presentation = `${key}:${pointer?.x}:${pointer?.y}:${dragging}`
     if (!changed && lastPresentation.current === presentation) return
@@ -227,6 +270,7 @@ function HeatmapWorkspace({ symbol }: { symbol: string }) {
   const hoverLiq = inside && pointer && !overColumn ? liqPrints.find(l => Math.hypot(geometry.x(l.t) - pointer.x, geometry.y(l.p) - pointer.y) < 12) : null
   const hoverReaction = pointer && !overColumn ? getReactionMarkers(view).find(e => Math.hypot(e.x - pointer.x, e.y - pointer.y) <= 12) : null
   const readyFlow = flow.count > 0
+  const visibleColCount = data.heatCols.filter(c => c.t >= start - 3000 && c.t <= end).length
   const context = stale ? 'Waiting for fresh depth'
     : flow.buyShare === null ? 'Waiting for recorded trades'
       : flow.buyShare > 0.55 ? 'Buy aggressors are more active'
@@ -345,6 +389,7 @@ function HeatmapWorkspace({ symbol }: { symbol: string }) {
               <button type="button" aria-label="Reset chart view" title="Reset chart (double-click / 0)" onClick={() => { setSpan(120000); setRangeSetting('auto'); returnLive() }} className="rounded p-1.5 text-neutral-400 hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-neutral-400"><RotateCcw size={12} /></button>
             </div>
             {!last && <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6"><div className="max-w-xs text-center"><Crosshair className="mx-auto mb-3 size-7 text-neutral-400/60" /><p className="text-sm font-medium">{historical ? 'No recorded depth at this time' : 'Waiting for order book snapshots'}</p><p className="mt-2 text-xs leading-relaxed text-neutral-500">The map shows only observed market depth. A gap in the recording is not reconstructed from the current book.</p>{data.lastError && <p className="mt-2 text-xs text-amber-300">{data.lastError}</p>}</div></div>}
+            {last && visibleColCount < 3 && !historical && <div className="pointer-events-none absolute left-1/2 top-3 z-10 -translate-x-1/2 rounded-md border border-white/10 bg-[#141414]/95 px-3 py-1.5 text-[11px] text-neutral-300" role="status">Collecting depth columns… {data.heatCols.length} recorded — the map fills in as snapshots arrive.</div>}
             {last && historyMs < span * 0.7 && !inside && <div className="pointer-events-none absolute left-5 top-10 max-w-[180px] rounded-lg border border-white/[0.06] bg-[#0b0b0b]/80 p-3"><div className="text-[10px] font-medium text-neutral-400">Recording liquidity history</div><p className="mt-1 text-[10px] leading-relaxed text-neutral-500">{duration(historyMs)} observed of {span / 60000}m selected. Earlier depth isn’t available.</p></div>}
             {inside && hoverTime !== null && hoverPrice !== null && <div data-testid="heatmap-inspector" className="pointer-events-none absolute z-20 w-48 rounded-md border border-neutral-600/50 bg-[#151515]/95 p-3 text-[11px] shadow-2xl" style={{ left: Math.max(8, Math.min(pointer.x + 16, size.w - 200)), top: Math.max(8, Math.min(pointer.y + 16, size.h - (hoverReaction ? 290 : hoverLine || hoverLiq || overColumn ? 250 : hoverBubble ? 230 : 130))) }}>
               <div className="mb-2 flex justify-between gap-3"><span className="font-mono font-semibold text-white">{fmtPrice(hoverBucket, meta.tick)}</span><span className="text-neutral-500">{clock(hoverTime)} UTC</span></div>

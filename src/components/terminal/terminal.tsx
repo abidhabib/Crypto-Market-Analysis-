@@ -57,11 +57,15 @@ export default function Terminal() {
   // socket reconnects on its own; no reload is ever required.
   const sync = usePoll(() => {
     const s = getStream()
+    // A checkmark means the data is HERE and FRESH — a buffer that arrived
+    // minutes ago and then went silent must not keep claiming ✓.
+    const fresh = Date.now() - s.lastMsgAt < 15_000 && s.lastMsgAt > 0
+    const tradesFresh = Date.now() - s.lastTradeReceivedAt < 15_000 && s.lastTradeReceivedAt > 0
     return {
       status: s.status,
-      candles: s.klines.length,
-      book: !!s.depth,
-      trades: s.trades.length,
+      candles: fresh ? s.klines.length : 0,
+      book: !!s.depth && fresh,
+      trades: tradesFresh ? s.trades.length : 0,
       snapshot: s.hasSnapshot,
       error: s.lastError,
     }

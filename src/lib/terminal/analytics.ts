@@ -6,7 +6,7 @@
  */
 
 import { getStream, now } from './stream-client'
-import { rsiFromCloses, cvdUsdFromTrades } from './shared-metrics'
+import { rsiFromCloses, sharedCvd, sharedRsi1m } from './shared-metrics'
 import { valueArea } from './indicators'
 import type { Candle, Trade, WallRec } from './types'
 import { metaFor } from './constants'
@@ -126,9 +126,9 @@ export function regime(): Regime | null {
 
   return {
     label, dir, strength,
-    // canonical RSI (shared-metrics): full buffered series, never a short
-    // slice — sliced Wilder seeding is why panels disagreed with each other
-    rsi1m: rsiFromCloses(closes1m) ?? NaN,
+    // canonical RSI: the one sharedRsi1m() every panel displays (full
+    // stream 1m closes, Wilder) — never a locally recomputed variant
+    rsi1m: sharedRsi1m() ?? NaN,
     rsi15m: rsiFromCloses(closes15) ?? NaN,
     atrPct: (atrNow / price) * 100,
     volPctile, volLabel,
@@ -156,10 +156,13 @@ export function flow(): Flow | null {
   const tNow = trades[trades.length - 1].t
   const back = (ms: number) => tNow - ms
 
-  // CVD values come from the one shared computation (shared-metrics)
-  const cvdSession = cvdUsdFromTrades(trades)
-  const cvd30 = cvdUsdFromTrades(trades, back(1_800_000))
-  const cvd5 = cvdUsdFromTrades(trades, back(300_000))
+  // CVD values come from the one shared computation (shared-metrics),
+  // which reads the append-only CVD series — NOT this trade buffer, whose
+  // replacement by snapshots collapsed session/30m/5m into one number.
+  const shared = sharedCvd()
+  const cvdSession = shared?.session ?? 0
+  const cvd30 = shared?.m30 ?? 0
+  const cvd5 = shared?.m5 ?? 0
   let buy1 = 0, tot1 = 0, buy15 = 0, tot15 = 0
   let buy10 = 0
   let count10m = 0

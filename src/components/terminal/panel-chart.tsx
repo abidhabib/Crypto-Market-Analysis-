@@ -7,12 +7,12 @@ import {
   type IChartApi, type ISeriesApi, type UTCTimestamp, type IPriceLine,
 } from 'lightweight-charts'
 import { useTerminal } from '@/lib/terminal/store'
-import { getStream, setStreamSymbol } from '@/lib/terminal/stream-client'
+import { getStream, setStreamSymbol, now as streamNow } from '@/lib/terminal/stream-client'
 import { usePoll, useHotkeys } from '@/lib/terminal/hooks'
 import { candleBucket } from '@/lib/terminal/candle-bucket.js'
 import TimeframePicker from './timeframe-picker'
 import { aggregate, timeframeMs, ema, bollinger, rsi, sessionVwap } from '@/lib/terminal/indicators'
-import { cvdSeriesUsd } from '@/lib/terminal/shared-metrics'
+import { cvdSeriesUsd, sharedRsi1m, liveMid } from '@/lib/terminal/shared-metrics'
 import { levels as keyLevels } from '@/lib/terminal/analytics'
 import { metaFor, GREEN, RED, GRID, TEXT_DIM } from '@/lib/terminal/constants'
 import { fmtPrice, fmtCompact, fmtPct } from '@/lib/terminal/format'
@@ -23,6 +23,15 @@ import type { Candle } from '@/lib/terminal/types'
 const BG = '#0c0c0c'
 
 interface HLine { id: number; price: number }
+
+/**
+ * Module-level candle history cache (symbol|timeframe). The panel unmounts
+ * on every tab switch; without this, each return blocked on a fresh
+ * /api/klines fetch behind a "Loading candles…" overlay for tens of
+ * seconds. With it, a remount renders the cached candles immediately and
+ * refreshes them in the background.
+ */
+const historyCache = new Map<string, Candle[]>()
 
 export default function ChartPanel() {
   const { symbol, timeframe, setTimeframe } = useTerminal()
@@ -52,24 +61,38 @@ export default function ChartPanel() {
   const [hLines, setHLines] = useState<HLine[]>([])
   const [legend, setLegend] = useState<{ o: number; h: number; l: number; c: number; v: number } | null>(null)
   const [ready, setReady] = useState(false)
+  const [histVersion, setHistVersion] = useState(0)
 
   useEffect(() => { hModeRef.current = hMode }, [hMode])
   useHotkeys((k) => { if (k === 'escape') setHMode(false) })
 
   useEffect(() => { setStreamSymbol(symbol) }, [symbol])
 
-  // ---- fetch history on symbol/timeframe change
+  // ---- fetch history on symbol/timeframe change (cache-first: a remount
+  // after a tab switch renders cached candles instantly, `ready` starts
+  // true, and the network refresh lands in the background)
   useEffect(() => {
     let alive = true
-    setReady(false)
+    const cacheKey = `${symbol}|${timeframe}`
+    const cached = historyCache.get(cacheKey)
+    if (cached?.length) {
+      baseRef.current = cached
+      syncedRef.current = ''
+      setReady(true)
+    } else {
+      setReady(false)
+    }
     ;(async () => {
       try {
         const res = await fetch(`/api/klines?symbol=${symbol}&interval=${timeframe}&limit=600`, { cache: 'no-store' })
         const json = await res.json()
         if (!alive) return
         if (json.candles) {
-          baseRef.current = json.candles.map((r: number[]) => ({ t: r[0], o: r[1], h: r[2], l: r[3], c: r[4], v: r[5] }))
+          const rows = json.candles.map((r: number[]) => ({ t: r[0], o: r[1], h: r[2], l: r[3], c: r[4], v: r[5] }))
+          historyCache.set(cacheKey, rows)
+          baseRef.current = rows
           syncedRef.current = ''
+          setHistVersion((v) => v + 1)
         }
       } finally { if (alive) setReady(true) }
     })()
@@ -113,13 +136,28 @@ export default function ChartPanel() {
 
     let rchart: IChartApi | null = null
     if (rsiWrapRef.current) {
-      rchart = createChart(rsiWrapRef.current, { ...common, autoSize: false })
-      const rs = rchart.addSeries(LineSeries, { color: '#7dd3fc', lineWidth: 1, priceLineVisible: false })
+      rchart = createChart(rsiWrapRef.current, {
+        ...common,
+        autoSize: false,
+        // no own time axis — it is slaved to the main chart BY TIME RANGE
+        timeScale: { borderColor: GRID, timeVisible: true, secondsVisible: false, visible: false },
+      })
+      // lastValueVisible off: the pane's displayed current value is the
+      // canonical "RSI-14 (1m)" label in the pane header (shared-metrics),
+      // not this series' timeframe-based last point.
+      const rs = rchart.addSeries(LineSeries, { color: '#7dd3fc', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
       rs.createPriceLine({ price: 70, color: 'rgba(234,57,67,0.5)', lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: '70' })
       rs.createPriceLine({ price: 30, color: 'rgba(22,199,132,0.5)', lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: '30' })
       rsiRef.current = rs
-      chart.timeScale().subscribeVisibleLogicalRangeChange((r) => { if (r) rchart?.timeScale().setVisibleLogicalRange(r) })
-      rchart.timeScale().subscribeVisibleLogicalRangeChange((r) => { if (r) chart.timeScale().setVisibleLogicalRange(r) })
+      // Sync BY TIME RANGE (like the CVD pane). The old logical-range sync
+      // misaligned whenever the RSI series had a different data length
+      // than the candle series — its axis read hours away from the main
+      // chart's at the same moment.
+      chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+        if (!rchart) return
+        const vr = chart.timeScale().getVisibleRange()
+        if (vr) { try { rchart.timeScale().setVisibleRange(vr) } catch { /* data not ready yet */ } }
+      })
     }
 
     let cchart: IChartApi | null = null
@@ -196,9 +234,14 @@ export default function ChartPanel() {
   // axis last-price tag — refreshed at most once a minute and looked frozen
   // tens of dollars away from the live ticker.
   const tick = usePoll(() => {
-    const k = getStream().klines
+    const s = getStream()
+    const k = s.klines
     const l = k[k.length - 1]
-    return l ? `${k.length}|${l.t}|${l.c}|${l.h}|${l.l}|${l.v}` : 'empty'
+    // bookTop/ticker are in the signature too: the forming candle tracks
+    // the live price between kline events (item F), so a bookTicker move
+    // alone must retrigger the merge/redraw.
+    const px = s.bookTop ? `${s.bookTop.b}|${s.bookTop.a}` : `${s.ticker?.c ?? ''}`
+    return l ? `${k.length}|${l.t}|${l.c}|${l.h}|${l.l}|${l.v}|${px}` : `empty|${px}`
   }, 300)
   useEffect(() => {
     if (!ready || !candleRef.current) return
@@ -221,6 +264,23 @@ export default function ChartPanel() {
       }
     }
     if (!merged.length) return
+    // Track the live price in the FORMING candle between kline events: the
+    // candle series' last value otherwise only moves on kline relays while
+    // the header ticker moves on bookTicker, and the axis tag drifts
+    // dollars away from the ticker in a fast move. The next real kline
+    // event replaces this bar (merge above), so this never rewrites
+    // history — it only keeps the still-forming bar honest.
+    const livePx = liveMid()
+    const lastIdx = merged.length - 1
+    const forming = merged[lastIdx]
+    if (livePx != null && isFinite(livePx) && livePx > 0 && forming.t + tfMs > streamNow()) {
+      merged = [...merged.slice(0, lastIdx), {
+        ...forming,
+        c: livePx,
+        h: Math.max(forming.h, livePx),
+        l: Math.min(forming.l, livePx),
+      }]
+    }
     baseRef.current = merged
     // live OHLC legend for the forming candle (crosshair hover overrides it)
     if (!hoverRef.current) {
@@ -323,11 +383,11 @@ export default function ChartPanel() {
     // as every other panel — values are USD, not coin units.
     if (cvdRef.current) {
       if (ind.cvd && merged.length) {
-        cvdRef.current.setData(cvdSeriesUsd(getStream().trades, tfMs)
+        cvdRef.current.setData(cvdSeriesUsd(tfMs)
           .map((p) => ({ time: (p.t / 1000) as UTCTimestamp, value: p.v })))
       } else cvdRef.current.setData([])
     }
-  }, [tick, ready, symbol, timeframe, ind])
+  }, [tick, ready, histVersion, symbol, timeframe, ind])
 
   // ---- horizontal price lines
   useEffect(() => {
@@ -340,6 +400,10 @@ export default function ChartPanel() {
   }, [hLines, ready])
 
   const ticker = usePoll(() => getStream().ticker, 500)
+  // The canonical 1m RSI every panel displays (shared-metrics) — shown in
+  // the RSI pane header so the chart's stated current RSI is that number,
+  // whatever timeframe the pane's line is drawn on.
+  const rsiCanon = usePoll(() => sharedRsi1m(), 500)
   const flowTick = usePoll(() => getStream().trades.length, 500)
 
   // ---- key levels as price lines (POC / value area / 24h range)
@@ -453,7 +517,8 @@ export default function ChartPanel() {
           {ind.rsi && (
             <>
               <div className="flex items-center gap-2 px-2 pt-1 text-[10px] text-muted-foreground">
-                <span>RSI (14)</span>
+                <span>RSI-14 (1m)</span>
+                <span className="font-mono text-foreground/90">{rsiCanon != null ? rsiCanon.toFixed(1) : '—'}</span>
                 <SourceBadge label="live" />
               </div>
               <div ref={rsiWrapRef} className="h-[12%] min-h-[64px]" />

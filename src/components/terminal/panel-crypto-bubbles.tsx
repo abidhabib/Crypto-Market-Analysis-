@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { RefreshCw } from 'lucide-react'
 import { fmtCompact, fmtPct, fmtPrice } from '@/lib/terminal/format'
+import { normalizeMarketRows, bubbleDiameter, type BubbleRow } from '@/lib/terminal/bubbles-model'
 import { cn } from '@/lib/utils'
 
 /**
@@ -10,12 +11,14 @@ import { cn } from '@/lib/utils'
  * The previous version embedded cryptobubbles.net in an iframe; that site
  * refuses framing, so the tab rendered permanently blank. Bubble area is
  * proportional to 24h quote volume; colour encodes 24h % change.
+ *
+ * The panel always shows one of: loading, error (with retry), empty, or
+ * the bubbles — never a silent black box. Rows are normalized through
+ * bubbles-model (any payload shape, NaN-guarded sizes).
  */
 
-interface Row { s: string; c: number; P: number; h: number; l: number; o: number; q: number; v: number }
-
 export default function CryptoBubblesPanel() {
-  const [rows, setRows] = useState<Row[] | null>(null)
+  const [rows, setRows] = useState<BubbleRow[] | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [asOf, setAsOf] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -24,11 +27,16 @@ export default function CryptoBubblesPanel() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch('/api/market', { cache: 'no-store' })
-      const json = await res.json()
+      const res = await fetch('/api/market', { cache: 'no-store', signal: AbortSignal.timeout(15_000) })
+      const json: unknown = await res.json().catch(() => null)
       if (!alive.current) return
-      if (!res.ok || !Array.isArray(json)) throw new Error(json?.error ?? `HTTP ${res.status}`)
-      setRows(json as Row[])
+      if (!res.ok) {
+        const msg = (json as { error?: string } | null)?.error
+        throw new Error(msg ?? `HTTP ${res.status}`)
+      }
+      const normalized = normalizeMarketRows(json)
+      if (!normalized.length) throw new Error('market route returned no usable pairs')
+      setRows(normalized)
       setErr(null)
       setAsOf(Date.now())
     } catch (e) {
@@ -49,7 +57,7 @@ export default function CryptoBubblesPanel() {
   const maxQ = rows?.reduce((a, r) => Math.max(a, r.q), 0) ?? 0
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[#111318]" data-testid="panel-bubbles">
+    <div className="flex h-full min-h-0 flex-col bg-[#111318]" data-testid="panel-bubbles" data-count={rows?.length ?? 0}>
       <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/60 px-3 py-1.5 text-xs">
         <span className="text-muted-foreground">
           Top USDT pairs by 24h volume · bubble size = 24h quote volume · colour = 24h change
@@ -76,12 +84,17 @@ export default function CryptoBubblesPanel() {
           </div>
         )}
         {!rows && !err && (
-          <div className="mt-10 text-center text-xs text-muted-foreground" role="status">Loading market bubbles…</div>
+          <div className="mt-10 text-center text-xs text-muted-foreground" role="status">
+            <RefreshCw className="mr-1.5 inline size-3 animate-spin" /> Loading market bubbles…
+          </div>
         )}
-        {rows && (
+        {rows && rows.length === 0 && !err && (
+          <div className="mt-10 text-center text-xs text-muted-foreground" role="status">No pairs returned by the market route.</div>
+        )}
+        {rows && rows.length > 0 && (
           <div className="flex flex-wrap items-center justify-center gap-1.5">
             {rows.map((r) => {
-              const d = Math.round(46 + Math.sqrt(r.q / (maxQ || 1)) * 118)
+              const d = bubbleDiameter(r.q, maxQ)
               const up = r.P >= 0
               const intensity = Math.min(0.85, 0.25 + Math.abs(r.P) / 12)
               const base = r.s.replace('USDT', '')

@@ -6,6 +6,7 @@ import { useTerminal } from '@/lib/terminal/store'
 import { metaFor } from '@/lib/terminal/constants'
 import { fmtCompact, fmtPrice } from '@/lib/terminal/format'
 import { buildFootprint, footprintReading } from '@/lib/terminal/footprint-model'
+import { cvdUsdBetween } from '@/lib/terminal/shared-metrics'
 import { useFootprintData } from '@/lib/terminal/use-footprint-data'
 import { useCanvasSize, useRaf } from '@/lib/terminal/hooks'
 import { useHeatmapNavigation } from '@/lib/terminal/use-heatmap-navigation'
@@ -94,6 +95,13 @@ function FootprintWorkspace({ symbol }: { symbol: string }) {
     drawFootprintCursor(ctx, view, pointer)
   }, true, 16)
   const totals = bars.reduce((v, b) => ({ buy: v.buy + b.buy, sell: v.sell + b.sell, buyUsd: v.buyUsd + b.buyUsd, sellUsd: v.sellUsd + b.sellUsd, usd: v.usd + b.buyUsd + b.sellUsd, count: v.count + b.count }), { buy: 0, sell: 0, buyUsd: 0, sellUsd: 0, usd: 0, count: 0 })
+  // Visible-window CVD from the append-only CVD series (cumUsd(end) −
+  // cumUsd(start)) — the same series Chart/Signals/Insights read, so the
+  // number can't drift from theirs when snapshots replace the trade
+  // buffer. Frozen snapshots keep their own frozen-trade sum.
+  const visibleCvd = !frozen && bars.length
+    ? cvdUsdBetween(bars[0].t, bars[bars.length - 1].end)
+    : totals.buyUsd - totals.sellUsd
   const live = !frozen && feed.status === 'live' && feed.receivedAt > 0 && feed.clientNow - feed.receivedAt < 15000
   const next = selected && all.find(b => b.t === selected.end)
   const previous = selected && all.find(b => b.end === selected.t)
@@ -126,10 +134,10 @@ function FootprintWorkspace({ symbol }: { symbol: string }) {
     <div className="grid shrink-0 grid-cols-4 divide-x divide-white/[0.06] border-b border-white/[0.08] text-[10px]">
       <Metric label="Visible volume · USDT" value={fmtCompact(totals.usd, '$')} />
       <Metric label={`Visible volume · ${symbol.replace(/USDT$/, '')}`} value={volume(totals.buy + totals.sell)} />
-      {/* CVD in USD via the shared formula (Σ ±p·q over the same visible
-          trades as the volume metrics above — shared-metrics tradeDeltaUsd),
-          so the three numbers can never silently disagree. */}
-      <Metric label="Visible CVD · USD" value={fmtCompact(totals.buyUsd - totals.sellUsd, '$')} tone={totals.buyUsd >= totals.sellUsd ? 'text-emerald-400' : 'text-rose-400'} />
+      {/* CVD in USD from the shared append-only CVD series over the
+          visible window (shared-metrics cvdUsdBetween) — same source as
+          Chart / Signals / Insights, so the numbers can't disagree. */}
+      <Metric label="Visible CVD · USD" value={fmtCompact(visibleCvd, '$')} tone={visibleCvd >= 0 ? 'text-emerald-400' : 'text-rose-400'} />
       <Metric label="Buy share · coin" value={totals.buy + totals.sell ? `${(totals.buy / (totals.buy + totals.sell) * 100).toFixed(1)}%` : '—'} />
     </div>
     <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/[0.07] px-3 py-2 text-[10px] text-neutral-500">

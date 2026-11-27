@@ -68,6 +68,101 @@ let socket: Socket | null = null
 let wanted = 'BTCUSDT'
 const listeners = new Set<() => void>()
 
+// ---------------------------------------------------------------- CVD series
+/**
+ * Append-only cumulative volume delta (USD), maintained independently of
+ * state.trades. state.trades is REPLACED by every snapshot and capped, so
+ * any CVD recomputed from it flips sign/magnitude whenever a background
+ * snapshot lands and its 5m/30m/session windows collapse into each other.
+ * This series only ever grows: trades are deduped by aggTrade id for the
+ * whole session, live trades append at the tail, and when a snapshot brings
+ * older unseen trades they are merged in timestamp order and the cumulative
+ * is rebuilt ONCE from the merged set.
+ */
+interface CvdPoint { t: number; cum: number }
+const cvdSeen = new Set<number>()
+let cvdTrades: Trade[] = []        // deduped, sorted by (t, a)
+let cvdPoints: CvdPoint[] = []     // parallel to cvdTrades: cum AFTER each trade
+let cvdBaseCum = 0                 // cum of trades dropped by the memory guard
+let cvdBaseT = 0                   // time up to which cvdBaseCum applies
+let cvdCount = 0                   // total trades ever applied (incl. dropped)
+
+const cvdDelta = (t: Trade) => (t.m ? -t.p * t.q : t.p * t.q)
+
+function cvdRebuild() {
+  cvdTrades.sort((a, b) => a.t - b.t || a.a - b.a)
+  let cum = cvdBaseCum
+  cvdPoints = cvdTrades.map((t) => { cum += cvdDelta(t); return { t: t.t, cum } })
+}
+
+function cvdAdd(incoming: readonly Trade[]) {
+  const fresh: Trade[] = []
+  for (const t of incoming) {
+    if (!t || !isFinite(t.p * t.q)) continue
+    if (cvdSeen.has(t.a)) continue
+    cvdSeen.add(t.a)
+    fresh.push(t)
+  }
+  if (!fresh.length) return
+  cvdCount += fresh.length
+  fresh.sort((a, b) => a.t - b.t || a.a - b.a)
+  const last = cvdTrades[cvdTrades.length - 1]
+  if (!last || fresh[0].t > last.t || (fresh[0].t === last.t && fresh[0].a > last.a)) {
+    // fast path: everything is newer than the tail — append
+    let cum = cvdPoints.length ? cvdPoints[cvdPoints.length - 1].cum : cvdBaseCum
+    for (const t of fresh) {
+      cvdTrades.push(t)
+      cum += cvdDelta(t)
+      cvdPoints.push({ t: t.t, cum })
+    }
+  } else {
+    // snapshot brought older trades: merge + rebuild the cumulative once
+    cvdTrades.push(...fresh)
+    cvdRebuild()
+  }
+  // memory guard: drop the oldest chunk, folding its cum into the base
+  if (cvdTrades.length > 400_000) {
+    const drop = cvdTrades.length - 300_000
+    const dropped = cvdTrades.splice(0, drop)
+    cvdBaseCum = cvdPoints[drop - 1]?.cum ?? cvdBaseCum
+    cvdBaseT = dropped[dropped.length - 1]?.t ?? cvdBaseT
+    cvdPoints.splice(0, drop)
+    for (const t of dropped) cvdSeen.delete(t.a)
+  }
+}
+
+function cvdReset() {
+  cvdSeen.clear()
+  cvdTrades = []
+  cvdPoints = []
+  cvdBaseCum = 0
+  cvdBaseT = 0
+  cvdCount = 0
+}
+
+/** Cumulative USD delta at time ts (last point with t <= ts). */
+export function getCvdCumAt(ts: number): number {
+  if (!cvdPoints.length) return cvdBaseCum
+  let lo = 0, hi = cvdPoints.length - 1, found = -1
+  while (lo <= hi) {
+    const mid = (lo + hi) >>> 1
+    if (cvdPoints[mid].t <= ts) { found = mid; lo = mid + 1 } else hi = mid - 1
+  }
+  return found >= 0 ? cvdPoints[found].cum : cvdBaseCum
+}
+
+export function getCvdLatest(): CvdPoint | null {
+  if (cvdPoints.length) return cvdPoints[cvdPoints.length - 1]
+  return cvdCount ? { t: cvdBaseT, cum: cvdBaseCum } : null
+}
+
+export function getCvdPoints(): readonly CvdPoint[] { return cvdPoints }
+export function getCvdCount(): number { return cvdCount }
+export function getCvdFirstT(): number | null {
+  if (cvdPoints.length) return cvdPoints[0].t
+  return cvdCount ? cvdBaseT : null
+}
+
 /** Keep the displayed 24h range honest: live prices widen it immediately. */
 function widenRange(price: number) {
   if (!state.ticker || !isFinite(price) || price <= 0) return
@@ -84,6 +179,9 @@ function applySnapshot(snap: Snapshot) {
   const byId = new Map<number, Trade>()
   for (const t of snap.trades ?? []) if (!byId.has(t.a)) byId.set(t.a, t)
   state.trades = [...byId.values()].sort((a, b) => a.a - b.a)
+  // the snapshot's trades also feed the append-only CVD series (deduped by
+  // id there — a snapshot replacing state.trades must never reset CVD)
+  cvdAdd(state.trades)
   state.klines = snap.klines ?? []
   state.ticker = snap.ticker
   state.depth = snap.depth
@@ -127,6 +225,10 @@ function ensureSocket(): Socket {
   socket = io(streamUrl, {
     path: '/',
     transports: ['websocket', 'polling'],
+    // The stream can be slow to accept under VPS load; the 20s default
+    // connect timeout fired "Stream connection error: timeout" on cold
+    // loads that would have connected seconds later.
+    timeout: 45_000,
     reconnectionDelay: 800,
     reconnectionDelayMax: 5000,
   })
@@ -148,7 +250,17 @@ function ensureSocket(): Socket {
     listeners.forEach((l) => l())
   })
   socket.on('connect', () => console.info('[stream] connected via', socket!.io.engine.transport.name))
-  socket.on('connect', () => socket!.emit('subscribe', { symbol: wanted }))
+  socket.on('connect', () => {
+    socket!.emit('subscribe', { symbol: wanted })
+    // If no snapshot lands shortly after (re)connect — e.g. the first
+    // subscribe raced a slow warm-up — ask again with refresh so the server
+    // re-sends its (cached) snapshot instead of sitting on CONNECTING.
+    let tries = 0
+    const watchdog = setInterval(() => {
+      if (!socket?.connected || state.hasSnapshot || ++tries > 6) { clearInterval(watchdog); return }
+      socket.emit('subscribe', { symbol: wanted, refresh: true })
+    }, 4000)
+  })
   socket.on('snapshot', applySnapshot)
   socket.on('status', (e: { symbol: string; status: StreamStatus; error: string | null }) => {
     if (e.symbol !== wanted) return
@@ -162,6 +274,7 @@ function ensureSocket(): Socket {
     const fresh = e.trades.filter((t) => t.a > state.lastTradeA)
     if (!fresh.length) return
     state.lastTradeA = fresh[fresh.length - 1].a
+    cvdAdd(fresh)
     state.trades.push(...fresh)
     widenRange(fresh[fresh.length - 1].p)
     state.lastTradeReceivedAt = Date.now()
@@ -265,6 +378,7 @@ export function setStreamSymbol(symbol: string) {
   state.status = 'connecting'
   state.lastTradeA = 0
   state.lastTradeReceivedAt = 0
+  cvdReset()
   if (socket?.connected) socket.emit('subscribe', { symbol })
   listeners.forEach((l) => l())
 }

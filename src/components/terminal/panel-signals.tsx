@@ -131,7 +131,7 @@ export default function SignalsPanel() {
                   />
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2">
-                  <StatCard label="RSI · 1m" value={r.rsi1m.toFixed(1)} tone={r.rsi1m >= 70 ? 'up' : r.rsi1m <= 30 ? 'down' : 'neutral'} sub={r.rsi1m >= 70 ? 'overbought stretch' : r.rsi1m <= 30 ? 'oversold stretch' : 'neutral band'} />
+                  <StatCard label="RSI-14 (1m)" value={r.rsi1m.toFixed(1)} tone={r.rsi1m >= 70 ? 'up' : r.rsi1m <= 30 ? 'down' : 'neutral'} sub={r.rsi1m >= 70 ? 'overbought stretch' : r.rsi1m <= 30 ? 'oversold stretch' : 'neutral band'} />
                   <StatCard label="RSI · 15m" value={r.rsi15m.toFixed(1)} tone={r.rsi15m >= 70 ? 'up' : r.rsi15m <= 30 ? 'down' : 'neutral'} />
                   <StatCard label="ATR (1m)" value={`${r.atrPct.toFixed(3)}%`} sub={`${r.volPctile.toFixed(0)}th percentile · ${r.volLabel}`} />
                   <StatCard label="Price vs EMA50" value={fmtSigned(((mid - r.ema50_1m) / r.ema50_1m) * 100, 2) + '%'} tone={mid >= r.ema50_1m ? 'up' : 'down'} sub={`EMA21 ${fmtPrice(r.ema21_1m, meta.tick)}`} />

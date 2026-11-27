@@ -40,8 +40,11 @@ export default function SentimentPanel() {
 
   // Poll a primitive signature of the kline series — the array itself is
   // mutated in place by the stream client, so memoizing on its reference
-  // would freeze these gauges at first render.
-  const kTick = usePoll(() => { const k = getStream().klines; return k.length ? k[k.length - 1].t + k.length : 0 }, 2000)
+  // would freeze these gauges at first render. The signature MUST include
+  // the forming candle's CLOSE: with only (t, length) it changed just once
+  // a minute, so this panel's RSI lagged Signals' by up to 60s of price
+  // action and the two panels printed different "current" RSI values.
+  const kTick = usePoll(() => { const k = getStream().klines; const l = k[k.length - 1]; return l ? `${k.length}|${l.t}|${l.c}` : '0' }, 1000)
   const computed = useMemo(() => {
     const klines = getStream().klines
     const h1 = aggregate(klines, timeframeMs('1h'))
@@ -125,7 +128,7 @@ export default function SentimentPanel() {
     if (computed.rsiNow != null) {
       const r = computed.rsiNow
       out.push({
-        key: 'rsi', label: 'RSI (14, 1m base)', score: Math.min(100, Math.max(-100, (r - 50) * 3.3)),
+        key: 'rsi', label: 'RSI-14 (1m)', score: Math.min(100, Math.max(-100, (r - 50) * 3.3)),
         display: r.toFixed(1),
         note: r > 70 ? 'Overbought zone — momentum strong but stretched.' : r < 30 ? 'Oversold zone — capitulation territory.' : 'Neutral momentum band.',
         weight: 0.8, crowd: false,

@@ -7,14 +7,15 @@
  *  - RSI: Wilder RSI(14) over the stream's 1m candle closes, computed over
  *    the FULL buffered series (never a short slice — Wilder seeding makes
  *    short windows disagree with each other).
- *  - CVD: cumulative volume delta in USD from the stream's aggTrade buffer.
- *    A trade adds +p·q when the buyer is the aggressor (maker flag m=false)
- *    and −p·q when the seller is the aggressor (m=true).
+ *  - CVD: cumulative volume delta in USD from the stream client's
+ *    append-only CVD series (deduped by aggTrade id, never reset by
+ *    snapshots). A trade adds +p·q when the buyer is the aggressor (maker
+ *    flag m=false) and −p·q when the seller is the aggressor (m=true).
  *  - Live price/mid: best bid/ask mid from the bookTicker-fed bookTop,
  *    falling back to the 24h ticker close, then the last 1m close.
  */
 
-import { getStream } from './stream-client'
+import { getStream, getCvdCumAt, getCvdLatest, getCvdPoints, getCvdCount, getCvdFirstT } from './stream-client'
 import { rsi as rsiSeries } from './indicators'
 import type { Candle, Trade } from './types'
 
@@ -61,31 +62,51 @@ export interface SharedCvd {
   to: number        // newest buffered trade time
 }
 
-/** Canonical CVD readings from the live stream state (USD, labelled). */
+/**
+ * Canonical CVD readings (USD) from the stream client's append-only CVD
+ * series. Windows are cumUsd(now) − cumUsd(now − window) over that series,
+ * so a background snapshot replacing the trade buffer can never flip or
+ * collapse them (the old buffer-recompute did exactly that).
+ */
 export function sharedCvd(): SharedCvd | null {
-  const trades = getStream().trades
-  if (!trades.length) return null
-  const to = trades[trades.length - 1].t
+  const latest = getCvdLatest()
+  if (!latest) return null
+  const to = latest.t
   return {
-    session: cvdUsdFromTrades(trades),
-    m30: cvdUsdFromTrades(trades, to - 1_800_000),
-    m5: cvdUsdFromTrades(trades, to - 300_000),
-    trades: trades.length,
-    from: trades[0].t,
+    session: latest.cum,
+    m30: latest.cum - getCvdCumAt(to - 1_800_000),
+    m5: latest.cum - getCvdCumAt(to - 300_000),
+    trades: getCvdCount(),
+    from: getCvdFirstT() ?? to,
     to,
   }
 }
 
-/** Bucketed cumulative CVD series in USD for chart panes (same formula). */
-export function cvdSeriesUsd(trades: readonly Trade[], tfMs: number): { t: number; v: number }[] {
+/** CVD in USD of trades with fromMs <= t <= toMs, from the append-only series. */
+export function cvdUsdBetween(fromMs: number, toMs: number): number {
+  return getCvdCumAt(toMs) - getCvdCumAt(fromMs - 1)
+}
+
+let cvdSeriesCache: { key: string; out: { t: number; v: number }[] } | null = null
+
+/**
+ * Bucketed cumulative CVD series in USD for chart panes, built from the
+ * append-only CVD series (last cumulative value per bucket). Values are the
+ * session-absolute cumulative, identical in basis to sharedCvd().
+ */
+export function cvdSeriesUsd(tfMs: number): { t: number; v: number }[] {
+  const points = getCvdPoints()
+  const last = points[points.length - 1]
+  const key = `${tfMs}|${points.length}|${last?.t ?? 0}|${last?.cum ?? 0}`
+  if (cvdSeriesCache?.key === key) return cvdSeriesCache.out
   const buckets = new Map<number, number>()
-  for (const t of trades) {
-    const b = Math.floor(t.t / tfMs) * tfMs
-    buckets.set(b, (buckets.get(b) ?? 0) + tradeDeltaUsd(t))
+  for (const p of points) {
+    const b = Math.floor(p.t / tfMs) * tfMs
+    buckets.set(b, p.cum) // points are time-ordered: last write wins per bucket
   }
-  const sorted = [...buckets.entries()].sort((a, b) => a[0] - b[0])
-  let cum = 0
-  return sorted.map(([t, v]) => { cum += v; return { t, v: cum } })
+  const out = [...buckets.entries()].sort((a, b) => a[0] - b[0]).map(([t, v]) => ({ t, v }))
+  cvdSeriesCache = { key, out }
+  return out
 }
 
 /** Live last price: last trade, else ticker close, else last candle close. */
