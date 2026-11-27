@@ -7,7 +7,7 @@ import { getStream, now } from '@/lib/terminal/stream-client'
 import { usePoll } from '@/lib/terminal/hooks'
 import { aggregate, timeframeMs } from '@/lib/terminal/indicators'
 import { symbolMeta, GREEN, RED, GRID, TEXT_DIM } from '@/lib/terminal/constants'
-import { fmtPrice, fmtCompact, fmtUsd, fmtClock, fmtPct } from '@/lib/terminal/format'
+import { fmtPrice, fmtCompact, fmtUsd, fmtClock, fmtPct, fmtTime, fmtQty } from '@/lib/terminal/format'
 import { PanelHeader, SourceBadge, StatCard, AsOf } from './panel-kit'
 import { cn } from '@/lib/utils'
 import type { FuturesHistory } from '@/lib/terminal/types'
@@ -45,9 +45,19 @@ export default function FuturesPanel() {
     return () => { alive = false; clearInterval(id) }
   }, [symbol])
 
+  // Live-accumulated OI (stream polls OI every 10s) — the fallback series
+  // when the REST OI-history endpoint returns nothing.
+  const liveOi = usePoll(() => getStream().oiHistory, 5000)
+  const oiSeries = useMemo(
+    () => (hist?.oiHistory?.length ? hist.oiHistory : liveOi.map((o) => ({ t: o.t, oi: o.oi, usd: o.usd }))).filter((o) => o.usd > 0),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [hist?.oiHistory, liveOi.length],
+  )
+  const oiFromLive = !hist?.oiHistory?.length && oiSeries.length > 0
+
   // OI history chart
   useEffect(() => {
-    if (!oiChartRef.current || !hist) return
+    if (!oiChartRef.current) return
     if (!oiLwRef.current) {
       const chart = createChart(oiChartRef.current, {
         layout: { background: { type: ColorType.Solid, color: BG } as const, textColor: TEXT_DIM, fontSize: 10, attributionLogo: false },
@@ -62,8 +72,14 @@ export default function FuturesPanel() {
         priceLineVisible: false, lastValueVisible: true,
       })
     }
-    oiSeriesRef.current?.setData(hist.oiHistory.map((o) => ({ time: (o.t / 1000) as UTCTimestamp, value: o.usd })))
-  }, [hist])
+    // lightweight-charts needs strictly ascending, unique times
+    const seen = new Set<number>()
+    const data = oiSeries
+      .map((o) => ({ time: Math.floor(o.t / 1000) as UTCTimestamp, value: o.usd }))
+      .sort((a, b) => (a.time as number) - (b.time as number))
+      .filter((p) => { if (seen.has(p.time as number)) return false; seen.add(p.time as number); return true })
+    oiSeriesRef.current?.setData(data)
+  }, [oiSeries])
 
   useEffect(() => () => { oiLwRef.current?.remove(); oiLwRef.current = null; oiSeriesRef.current = null }, [])
 
@@ -75,9 +91,11 @@ export default function FuturesPanel() {
     const t = now() - 15 * 60_000
     const recent = getStream().liqs.filter((l) => l.t >= t)
     let longs = 0, shorts = 0
-    for (const l of recent) { const n = l.p * l.q; if (l.side === 'BUY') longs += n; else shorts += n }
+    // forceOrder side is the CLOSING order: SELL closes a long, BUY closes a
+    // short. (The old code had this backwards in the stats card.)
+    for (const l of recent) { const n = l.p * l.q; if (l.side === 'SELL') longs += n; else shorts += n }
     return { longs, shorts, count: recent.length }
-  }, 1000, [])
+  }, 1000)
 
   // ---- estimated liquidation map from recent 1m candles × leverage buckets
   const liqMap = useMemo(() => {
@@ -139,7 +157,10 @@ export default function FuturesPanel() {
         if (Math.abs(pct) > maxPct) continue
         const x0 = dir === 1 ? xOf(0) : xOf(pct)
         const wpx = (n / maxNotional) * (w - 66) * 0.48
-        const y = 6 + ((pct + maxPct) / (2 * maxPct)) * (h - axis - 18)
+        // Canvas y grows downward: positive pct (above mark) must map to the
+        // TOP half. The old mapping put long-liq bins (negative pct) on top,
+        // contradicting the "long liqs (below)" legend.
+        const y = 6 + ((maxPct - pct) / (2 * maxPct)) * (h - axis - 18)
         ctx.fillStyle = color
         ctx.fillRect(dir === 1 ? x0 : x0 - wpx, y - 2, wpx, 4)
       }
@@ -175,7 +196,7 @@ export default function FuturesPanel() {
       )}
       <div className="grid grid-cols-2 gap-2 p-3 sm:grid-cols-3 xl:grid-cols-6">
         <StatCard label="Mark price" value={fmtPrice(mark?.p, meta.tick)} sub={mark ? `index ${fmtPrice(mark.index, meta.tick)}` : undefined} />
-        <StatCard label="Funding (8h)" value={fundingNow != null ? fmtPct(fundingNow * 100, 4) : '—'} tone={fundingNow != null ? (fundingNow >= 0 ? 'down' : 'up') : undefined} sub={fundingNow != null ? `annualised ≈ ${fmtPct(fundingNow * 3 * 365, 1)} · ${fundingNow >= 0 ? 'longs pay' : 'shorts pay'}` : undefined} />
+        <StatCard label="Funding (8h)" value={fundingNow != null ? fmtPct(fundingNow * 100, 4) : '—'} tone={fundingNow != null ? (fundingNow >= 0 ? 'down' : 'up') : undefined} sub={fundingNow != null ? `annualised ≈ ${fmtPct(fundingNow * 3 * 365 * 100, 1)} · ${fundingNow >= 0 ? 'longs pay' : 'shorts pay'}` : undefined} />
         <StatCard label="Next funding in" value={mark?.nextFunding ? `${Math.max(0, Math.round((mark.nextFunding - now()) / 60000))}m` : '—'} sub={mark?.nextFunding ? fmtClock(mark.nextFunding) : undefined} />
         <StatCard label="Open interest" value={oi ? fmtCompact(oi.oi) : '—'} sub={oi ? `${fmtUsd(oi.oi * (mark?.p ?? 0))}` : undefined} />
         <StatCard label="Avg funding (7d)" value={avg7 != null ? fmtPct(avg7 * 100, 4) : '—'} />
@@ -184,8 +205,17 @@ export default function FuturesPanel() {
 
       <div className="grid gap-3 px-3 pb-3 xl:grid-cols-2">
         <div className="rounded-md border border-border/60">
-          <div className="border-b border-border/60 px-3 py-1.5 text-[11px] font-medium">Open interest (5m · last 15h, USD notional)</div>
-          <div ref={oiChartRef} className="h-[150px] w-full" />
+          <div className="border-b border-border/60 px-3 py-1.5 text-[11px] font-medium">
+            {oiFromLive ? 'Open interest (live-accumulated since connect, USD notional)' : 'Open interest (5m · last 15h, USD notional)'}
+          </div>
+          <div className="relative">
+            <div ref={oiChartRef} className="h-[150px] w-full" />
+            {oiSeries.length === 0 && (
+              <div className="absolute inset-0 flex items-center justify-center px-4 text-center text-[11px] text-muted-foreground">
+                OI history unavailable from the upstream endpoint and no live OI samples collected yet — the live OI value above keeps updating.
+              </div>
+            )}
+          </div>
         </div>
         <div className="rounded-md border border-border/60">
           <div className="border-b border-border/60 px-3 py-1.5 text-[11px] font-medium">Estimated liquidation map <SourceBadge label="estimate" tone="est" /></div>
@@ -206,7 +236,7 @@ export default function FuturesPanel() {
             <table className="w-full text-left font-mono text-[11px]">
               <thead className="sticky top-0 bg-[#0d1017] text-[10px] uppercase tracking-wide text-muted-foreground">
                 <tr>
-                  <th className="px-3 py-1 font-medium">Time</th>
+                  <th className="px-3 py-1 font-medium">Time (UTC)</th>
                   <th className="px-2 py-1 font-medium">Liquidated</th>
                   <th className="px-2 py-1 font-medium text-right">Price</th>
                   <th className="px-2 py-1 font-medium text-right">Qty</th>
@@ -219,7 +249,7 @@ export default function FuturesPanel() {
                     <td className="px-3 py-1 text-muted-foreground">{fmtTime(l.t)}</td>
                     <td className={cn('px-2 py-1 font-semibold', l.side === 'SELL' ? 'text-[#ea3943]' : 'text-[#16c784]')}>{l.side === 'SELL' ? 'LONG' : 'SHORT'}</td>
                     <td className="px-2 py-1 text-right">{fmtPrice(l.p, meta.tick)}</td>
-                    <td className="px-2 py-1 text-right">{fmtCompact(l.q)}</td>
+                    <td className="px-2 py-1 text-right">{fmtQty(l.q)}</td>
                     <td className="px-3 py-1 text-right">{fmtUsd(l.p * l.q)}</td>
                   </tr>
                 ))}

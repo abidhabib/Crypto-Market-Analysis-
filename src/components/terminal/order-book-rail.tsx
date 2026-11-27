@@ -16,7 +16,11 @@ export default function OrderBookRail() {
     const s = getStream()
     const ladder = s.ladder
     if (!ladder || !ladder.bids.length || !ladder.asks.length) return null
-    const mid = (ladder.bids[0].p + ladder.asks[0].p) / 2
+    // Top-of-book comes from the SAME source as the header ticker — the
+    // bookTicker-fed bookTop — so the rail mid/spread can never disagree
+    // with the header. The ladder rows below still render the full book.
+    const top = s.bookTop && s.bookTop.b > 0 && s.bookTop.a > 0 ? s.bookTop : null
+    const mid = top ? (top.b + top.a) / 2 : (ladder.bids[0].p + ladder.asks[0].p) / 2
     const spanPct = 0.0012 // ±12bps window
     const win = (levels: { p: number; q: number }[]) => {
       const rows = new Map<number, number>()
@@ -34,8 +38,8 @@ export default function OrderBookRail() {
     const bidNotional = bids.reduce((a, r) => a + r[1] * r[0], 0)
     const askNotional = asks.reduce((a, r) => a + r[1] * r[0], 0)
     const last = s.trades[s.trades.length - 1] ?? null
-    return { mid, spread: ladder.asks[0].p - ladder.bids[0].p, asks, bids, maxQ, bidNotional, askNotional, last }
-  }, 400, [])
+    return { mid, spread: top ? top.a - top.b : ladder.asks[0].p - ladder.bids[0].p, asks, bids, maxQ, bidNotional, askNotional, last }
+  }, 400)
 
   const trades = usePoll(() => getStream().trades.slice(-14).reverse(), 500)
 

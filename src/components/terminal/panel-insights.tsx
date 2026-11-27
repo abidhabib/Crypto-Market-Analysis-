@@ -13,7 +13,8 @@ import { getStream } from '@/lib/terminal/stream-client'
 import { usePoll } from '@/lib/terminal/hooks'
 import { metaFor } from '@/lib/terminal/constants'
 import { insights, marketSummary, levels, regime, type Insight, type InsightCat } from '@/lib/terminal/analytics'
-import { fmtPrice, fmtCompact } from '@/lib/terminal/format'
+import { liveMid } from '@/lib/terminal/shared-metrics'
+import { fmtPrice, fmtCompact, fmtTime } from '@/lib/terminal/format'
 import { PanelHeader, SourceBadge, StatCard } from './panel-kit'
 import { cn } from '@/lib/utils'
 import { Lightbulb, MapPin } from 'lucide-react'
@@ -45,7 +46,7 @@ export default function InsightsPanel() {
   const summary = marketSummary()
   const l = levels()
   const r = regime()
-  const mid = r?.price ?? 0
+  const mid = liveMid() ?? r?.price ?? 0
   const filtered = cat === 'all' ? feed : feed.filter((i) => i.cat === cat)
 
   return (
@@ -126,8 +127,8 @@ export default function InsightsPanel() {
               {i.cat}
             </span>
             <p className="min-w-0 flex-1 text-xs leading-relaxed text-foreground/90">{i.text}</p>
-            <time className="shrink-0 font-mono text-[10px] text-muted-foreground">
-              {new Date(i.t).toLocaleTimeString('en-GB', { hour12: false })}
+            <time className="shrink-0 font-mono text-[10px] text-muted-foreground" title="UTC">
+              {fmtTime(i.t)}
             </time>
           </article>
         ))}

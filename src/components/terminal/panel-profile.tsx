@@ -5,7 +5,7 @@ import { getStream, now } from '@/lib/terminal/stream-client'
 import { usePoll, useRaf, useCanvasSize } from '@/lib/terminal/hooks'
 import { useTerminal } from '@/lib/terminal/store'
 import { symbolMeta, GREEN, RED, TEXT_DIM } from '@/lib/terminal/constants'
-import { fmtCompact, fmtPrice, fmtUsd } from '@/lib/terminal/format'
+import { fmtPrice, fmtQty, fmtUsd } from '@/lib/terminal/format'
 import { valueArea } from '@/lib/terminal/indicators'
 import { PanelHeader, StatCard } from './panel-kit'
 import { cn } from '@/lib/utils'
@@ -29,7 +29,7 @@ export default function ProfilePanel() {
   const [binsN, setBinsN] = useState(60)
   const [backfill, setBackfill] = useState<Trade[]>([])
   const [coverage, setCoverage] = useState<number | null>(null)
-  const [stats, setStats] = useState<{ poc: number; vah: number; val: number; total: number; buy: number; sell: number } | null>(null)
+  const [stats, setStats] = useState<{ poc: number; vah: number; val: number; total: number; buy: number; sell: number; notional: number } | null>(null)
   const lastStats = useRef(0)
 
   useEffect(() => {
@@ -77,12 +77,13 @@ export default function ProfilePanel() {
       return
     }
 
-    let pMin = Infinity, pMax = 0, buy = 0, sell = 0
+    let pMin = Infinity, pMax = 0, buy = 0, sell = 0, notional = 0
     for (const t of win) {
       if (t.p < pMin) pMin = t.p
       if (t.p > pMax) pMax = t.p
       if (t.m) sell += t.q
       else buy += t.q
+      notional += t.p * t.q
     }
     const pad = (pMax - pMin) * 0.02 || pMax * 0.0004
     pMin -= pad
@@ -138,7 +139,7 @@ export default function ProfilePanel() {
     const t = Date.now()
     if (va && t - lastStats.current > 1200) {
       lastStats.current = t
-      setStats({ poc: va.poc, vah: va.vah, val: va.val, total: buy + sell, buy, sell })
+      setStats({ poc: va.poc, vah: va.vah, val: va.val, total: buy + sell, buy, sell, notional })
     }
   }
 
@@ -171,8 +172,19 @@ export default function ProfilePanel() {
         <StatCard label="POC" value={stats ? fmtPrice(stats.poc, meta.tick) : '—'} />
         <StatCard label="Value area high" value={stats ? fmtPrice(stats.vah, meta.tick) : '—'} />
         <StatCard label="Value area low" value={stats ? fmtPrice(stats.val, meta.tick) : '—'} />
-        <StatCard label="Total volume" value={fmtCompact(stats?.total ?? null)} sub={coverage != null ? `history covers ≈ ${coverage.toFixed(0)} min` : 'live only'} />
+        <StatCard
+          label="Total volume"
+          value={stats ? `${fmtQty(stats.total)} ${symbol.replace(/USDT$/, '')}` : '—'}
+          sub={stats ? `${fmtUsd(stats.notional)} notional` : undefined}
+        />
         <StatCard label="Buy / Sell split" value={stats && stats.total > 0 ? `${((stats.buy / (stats.buy + stats.sell)) * 100).toFixed(1)}% / ${((stats.sell / (stats.buy + stats.sell)) * 100).toFixed(1)}%` : '—'} />
+      </div>
+      <div className="border-b border-border/60 px-3 py-1 text-[10px] text-muted-foreground">
+        {coverage != null
+          ? coverage * 60_000 >= lookback
+            ? `Trade history covers the full ${(lookback / 60_000).toFixed(0)} min window (≈ ${coverage.toFixed(0)} min available).`
+            : `Coverage: trade history spans ≈ ${coverage.toFixed(0)} min of the selected ${(lookback / 60_000).toFixed(0)} min window — older trades are not backfilled, so this profile reflects only the covered part.`
+          : 'Live trades only — history backfill has not landed yet, so the profile covers only the time since connect.'}
       </div>
       <div className="min-h-0 flex-1">
         <canvas ref={canvasRef} className="block h-full w-full" />

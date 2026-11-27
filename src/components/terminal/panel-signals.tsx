@@ -12,6 +12,7 @@ import { getStream } from '@/lib/terminal/stream-client'
 import { usePoll } from '@/lib/terminal/hooks'
 import { metaFor } from '@/lib/terminal/constants'
 import { signal, regime, flow, book, toxicity, levels, type Signal, type Regime, type Flow, type BookRead, type Tox, type Levels } from '@/lib/terminal/analytics'
+import { liveMid } from '@/lib/terminal/shared-metrics'
 import { fmtPrice, fmtCompact, fmtSigned } from '@/lib/terminal/format'
 import { PanelHeader, SourceBadge, Meter, StatCard } from './panel-kit'
 import { cn } from '@/lib/utils'
@@ -32,7 +33,13 @@ export default function SignalsPanel() {
     l: levels(),
   }
   const { sig, r, f, b, tox, l } = reads
-  const mid = r?.price ?? 0
+  // Decision-level distances are measured against the LIVE mid (bookTicker
+  // bookTop), not the last 1m candle close — the stale close is why the bp
+  // distances disagreed with the live price.
+  const mid = liveMid() ?? r?.price ?? 0
+  // One driver number for the whole screen: direction-aligned share from
+  // signal() — the checklist and this meter always show the same value.
+  const driverShown = sig && sig.direction ? sig.driverAligned : f?.driver15m ?? 0.5
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto" data-testid="panel-signals">
@@ -173,10 +180,10 @@ export default function SignalsPanel() {
                     note="taker-buys as a share of the last 60s of volume"
                   />
                   <Meter
-                    label="Trade driver · 15m" value={(f.driver15m * 2 - 1) * 100}
-                    display={`${(f.driver15m * 100).toFixed(0)}%`}
-                    tone={f.driver15m >= 0.55 ? 'up' : f.driver15m <= 0.45 ? 'down' : 'neutral'}
-                    note="≥55% in one direction is a meaningful tilt"
+                    label="Trade driver · 15m" value={(driverShown * 2 - 1) * 100}
+                    display={`${(driverShown * 100).toFixed(0)}%`}
+                    tone={driverShown >= 0.55 ? 'up' : driverShown <= 0.45 ? 'down' : 'neutral'}
+                    note={sig?.direction ? 'share of aggressive volume flowing in the signal direction (same number as the checklist)' : 'taker-buy share of 15m volume · ≥55% in one direction is a meaningful tilt'}
                   />
                   <StatCard
                     label="Buy burst · 10s"

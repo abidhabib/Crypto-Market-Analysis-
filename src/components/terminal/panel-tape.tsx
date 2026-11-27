@@ -5,7 +5,7 @@ import { getStream } from '@/lib/terminal/stream-client'
 import { usePoll } from '@/lib/terminal/hooks'
 import { useTerminal } from '@/lib/terminal/store'
 import { symbolMeta, GREEN, RED } from '@/lib/terminal/constants'
-import { fmtPrice, fmtCompact, fmtTime, fmtUsd } from '@/lib/terminal/format'
+import { fmtPrice, fmtTime, fmtUsd, fmtQty } from '@/lib/terminal/format'
 import { PanelHeader, SourceBadge } from './panel-kit'
 import { cn } from '@/lib/utils'
 import type { Trade } from '@/lib/terminal/types'
@@ -29,7 +29,12 @@ export default function TapePanel() {
     const notional = recent.reduce((a, x) => a + x.p * x.q, 0) / 10
     const buys = recent.filter((x) => !x.m).reduce((a, x) => a + x.p * x.q, 0)
     const sell = recent.reduce((a, x) => a + x.p * x.q, 0) - buys
-    return { trades: all, rate, notional, buyPct: buys + sell > 0 ? (buys / (buys + sell)) * 100 : 50 }
+    // lastA is the memo key for the rows below: the trades array is mutated
+    // in place by the stream client, so keying on the array reference (the
+    // old code) froze the tape at whatever it held on first render while
+    // the stats kept updating — prints fell further and further behind.
+    const lastA = all.length ? all[all.length - 1].a : 0
+    return { trades: all, lastA, rate, notional, buyPct: buys + sell > 0 ? (buys / (buys + sell)) * 100 : 50 }
   }, 400)
 
   const rows = useMemo(() => {
@@ -37,7 +42,8 @@ export default function TapePanel() {
     if (side !== 'all') list = list.filter((t) => (side === 'buy' ? !t.m : t.m))
     if (minN > 0) list = list.filter((t) => t.p * t.q >= minN)
     return list.slice(0, 150)
-  }, [data.trades, side, minN])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.lastA, data.trades, side, minN])
 
   return (
     <div className="flex h-full flex-col min-h-0" data-testid="panel-tape">
@@ -96,7 +102,7 @@ export default function TapePanel() {
         <table className="w-full text-left font-mono text-[11px]">
           <thead className="sticky top-0 z-10 bg-[#0d1017] text-[10px] uppercase tracking-wide text-muted-foreground">
             <tr>
-              <th className="px-3 py-1.5 font-medium">Time</th>
+              <th className="px-3 py-1.5 font-medium">Time (UTC)</th>
               <th className="px-2 py-1.5 font-medium">Side</th>
               <th className="px-2 py-1.5 font-medium text-right">Price</th>
               <th className="px-2 py-1.5 font-medium text-right">Size</th>
@@ -112,7 +118,7 @@ export default function TapePanel() {
                   <td className="px-3 py-1 text-muted-foreground">{fmtTime(t.t)}</td>
                   <td className={cn('px-2 py-1 font-semibold', t.m ? 'text-[#ea3943]' : 'text-[#16c784]')}>{t.m ? 'SELL' : 'BUY'}</td>
                   <td className="px-2 py-1 text-right">{fmtPrice(t.p, meta.tick)}</td>
-                  <td className="px-2 py-1 text-right">{fmtCompact(t.q)}</td>
+                  <td className="px-2 py-1 text-right">{fmtQty(t.q)}</td>
                   <td className={cn('px-3 py-1 text-right', big && 'font-bold')}>{fmtUsd(n)}</td>
                 </tr>
               )

@@ -124,13 +124,18 @@ export function drawWhales(ctx: CanvasRenderingContext2D, v: WhalesView) {
   }
   const occupied: { x: number; y: number }[] = []
   for (const b of points.slice(0, v.labels)) {
-    let y = b.y - b.r - 7
-    if (occupied.some(o => Math.abs(o.x - b.x) < 65 && Math.abs(o.y - y) < 14)) y = b.y + b.r + 14
-    if (y < p.top + 10 || y > p.mainBottom - 5) continue
-    occupied.push({ x: b.x, y })
     const text = fmtCompact(b.event.total, '$'), width = ctx.measureText(text).width
-    ctx.fillStyle = '#0c0c0cde'; ctx.fillRect(b.x - width / 2 - 3, y - 10, width + 6, 13)
-    label(ctx, text, b.x, y, '#e1eaf1', 'center')
+    // Clamp the label centre inside the plot — bubbles at the right edge
+    // previously pushed their labels off-canvas / over the price axis.
+    const cx = Math.max(p.left + width / 2 + 3, Math.min(p.right - width / 2 - 3, b.x))
+    const collides = (y: number) => occupied.some(o => Math.abs(o.x - cx) < (width / 2 + 34) && Math.abs(o.y - y) < 14)
+    let y = b.y - b.r - 7
+    if (collides(y)) y = b.y + b.r + 14
+    if (collides(y)) continue // both slots taken — skip rather than overlap
+    if (y < p.top + 10 || y > p.mainBottom - 5) continue
+    occupied.push({ x: cx, y })
+    ctx.fillStyle = '#0c0c0cde'; ctx.fillRect(cx - width / 2 - 3, y - 10, width + 6, 13)
+    label(ctx, text, cx, y, '#e1eaf1', 'center')
   }
   for (const z of zoneLabels) {
     ctx.fillStyle = '#0c0c0ceb'; ctx.fillRect(p.right - z.width - 12, z.baseline - 10, z.width + 8, 13)

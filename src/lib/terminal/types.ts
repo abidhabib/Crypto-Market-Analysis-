@@ -23,6 +23,7 @@ export interface Snapshot {
   lastError: string | null
   trades: Trade[]
   klines: Candle[]
+  bookTop: { b: number; a: number } | null
   ticker: Ticker | null
   depth: { bids: Level[]; asks: Level[] } | null
   ladder: { bids: Level[]; asks: Level[]; t: number } | null

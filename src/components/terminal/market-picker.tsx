@@ -11,7 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { useTerminal } from '@/lib/terminal/store'
 import { metaFor, setTickOverride, heuristicTick } from '@/lib/terminal/constants'
-import { fmtPrice, fmtPct, fmtCompact } from '@/lib/terminal/format'
+import { fmtPrice, fmtPct, fmtCompact, fmtClock } from '@/lib/terminal/format'
 import { cn } from '@/lib/utils'
 import { Search, Star, ArrowUpDown, RefreshCw, Loader2 } from 'lucide-react'
 
@@ -174,7 +174,7 @@ export default function MarketPicker() {
           ))}
           <span className="ml-auto flex items-center gap-2 text-[10px] text-muted-foreground">
             {loading && <Loader2 className="size-3 animate-spin" />}
-            {updated ? `updated ${new Date(updated).toLocaleTimeString('en-GB', { hour12: false })}` : ''}
+            {updated ? `updated ${fmtClock(updated)}` : ''}
             <button onClick={fetchRows} className="rounded border border-border p-1 hover:text-foreground" aria-label="Refresh now">
               <RefreshCw className="size-3" />
             </button>

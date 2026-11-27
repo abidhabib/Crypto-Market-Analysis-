@@ -26,10 +26,18 @@ export function useRaf(draw: () => void, active = true, minMs = 0) {
     if (!active) return
     let raf = 0
     let last = 0
+    let lastErrAt = 0
     const loop = (t: number) => {
       if (t - last >= minMs) {
         last = t
-        drawRef.current()
+        try {
+          drawRef.current()
+        } catch (e) {
+          // A single bad frame must not kill the loop permanently (that is
+          // how canvas panels ended up blank forever) — log throttled, retry
+          // on the next frame.
+          if (t - lastErrAt > 5000) { lastErrAt = t; console.error('[canvas] draw failed (loop continues)', e) }
+        }
       }
       raf = requestAnimationFrame(loop)
     }

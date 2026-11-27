@@ -22,18 +22,33 @@ export function fmtUsd(v: number | null | undefined): string {
   return fmtCompact(v, '$')
 }
 
+/** All terminal times are UTC. fmtTime renders a UTC wall-clock time. */
 export function fmtTime(ts: number | null | undefined, withSeconds = true): string {
   if (!ts) return '—'
   const d = new Date(ts)
   const p = (n: number) => String(n).padStart(2, '0')
   return withSeconds
-    ? `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
-    : `${p(d.getHours())}:${p(d.getMinutes())}`
+    ? `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`
+    : `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`
 }
 
+/** UTC time with an explicit zone label, for standalone timestamps. */
 export function fmtClock(ts: number | null | undefined): string {
   if (!ts) return '—'
-  return new Date(ts).toLocaleTimeString('en-GB', { hour12: false })
+  return `${fmtTime(ts)} UTC`
+}
+
+/**
+ * Adaptive-precision quantity: ~3 significant digits so small sizes never
+ * collapse to "0.00" (0.0042 BTC stays "0.00420", 1.234 → "1.23").
+ */
+export function fmtQty(v: number | null | undefined): string {
+  if (v == null || !isFinite(v)) return '—'
+  if (v === 0) return '0'
+  const abs = Math.abs(v)
+  if (abs >= 1000) return fmtCompact(v)
+  const dp = Math.min(8, Math.max(0, 2 - Math.floor(Math.log10(abs))))
+  return v.toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp })
 }
 
 export function fmtPct(v: number | null | undefined, dp = 2): string {

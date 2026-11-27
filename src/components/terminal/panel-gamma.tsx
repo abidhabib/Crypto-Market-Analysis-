@@ -36,6 +36,10 @@ export default function GammaPanel() {
   }, [currency, unsupported])
 
   const detail = useMemo(() => data?.details?.[Math.min(expiryIdx, (data?.details?.length ?? 1) - 1)], [data, expiryIdx])
+  // flip is interpolated between strikes — badge the nearest listed strike
+  const flipStrike = detail?.flip != null && detail.strikes.length
+    ? detail.strikes.reduce((best, s) => (Math.abs(s.strike - detail.flip!) < Math.abs(best - detail.flip!) ? s.strike : best), detail.strikes[0].strike)
+    : null
 
   const maxAbs = useMemo(() => {
     if (!detail) return 1
@@ -96,10 +100,19 @@ export default function GammaPanel() {
           <div className="grid grid-cols-2 gap-2 border-b border-border/60 px-3 py-2 sm:grid-cols-3 xl:grid-cols-6">
             <StatCard label="Spot (underlying)" value={fmtPrice(data.spot, meta.tick)} />
             <StatCard label="Max pain" value={detail.maxPain != null ? fmtPrice(detail.maxPain, meta.tick) : '—'} sub="min payout to holders" />
-            <StatCard label="Zero-gamma flip" value={detail.flip != null ? fmtPrice(detail.flip, meta.tick) : '—'} sub={detail.netGex >= 0 ? 'net positive gamma' : 'net negative gamma'} tone={detail.netGex >= 0 ? 'up' : 'down'} />
+            <StatCard
+              label="Zero-gamma flip"
+              value={detail.flip != null ? fmtPrice(detail.flip, meta.tick) : 'n/a'}
+              sub={detail.flip != null
+                ? (detail.netGex >= 0 ? 'net positive gamma' : 'net negative gamma')
+                : detail.cum.length && detail.cum[detail.cum.length - 1].cum < 0
+                  ? 'cumulative GEX negative at every strike — no flip in range'
+                  : 'cumulative GEX positive at every strike — no flip in range'}
+              tone={detail.flip != null ? (detail.netGex >= 0 ? 'up' : 'down') : undefined}
+            />
             <StatCard label="Top wall" value={detail.walls[0] ? `${fmtPrice(detail.walls[0].strike, meta.tick)} ${detail.walls[0].side}` : '—'} sub={detail.walls[0] ? fmtUsd(detail.walls[0].gex) : undefined} />
             <StatCard label="Net GEX / 1%" value={fmtUsd(detail.netGex)} tone={detail.netGex >= 0 ? 'up' : 'down'} />
-            <StatCard label="PCR (OI)" value={detail.totalPutOi > 0 ? (detail.totalCallOi / detail.totalPutOi).toFixed(2) : '—'} sub={`C ${fmtCompact(detail.totalCallOi)} · P ${fmtCompact(detail.totalPutOi)}`} />
+            <StatCard label="PCR (OI)" value={detail.totalCallOi > 0 ? (detail.totalPutOi / detail.totalCallOi).toFixed(2) : '—'} sub={`P ${fmtCompact(detail.totalPutOi)} · C ${fmtCompact(detail.totalCallOi)}`} />
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
             <div className="space-y-1.5">
@@ -107,7 +120,7 @@ export default function GammaPanel() {
                 const val = mode === 'per' ? s.gex : (detail.cum.find((c) => c.strike === s.strike)?.cum ?? 0)
                 const pct = (Math.abs(val) / maxAbs) * 50
                 const isSpot = Math.abs(s.strike - data.spot) < (detail.strikes[1]?.strike ?? 1000) / 2
-                const isFlip = detail.flip === s.strike
+                const isFlip = flipStrike === s.strike
                 const isPain = detail.maxPain === s.strike
                 const isWall = detail.walls.some((w) => w.strike === s.strike)
                 return (

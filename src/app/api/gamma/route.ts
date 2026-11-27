@@ -100,10 +100,17 @@ export async function GET(req: NextRequest) {
       const cum: { strike: number; cum: number }[] = []
       let run = 0
       for (const s of perStrike) { run += s.gex; cum.push({ strike: s.strike, cum: run }) }
+      // zero-gamma flip: strike where cumulative GEX crosses zero, linearly
+      // interpolated between the bracketing strikes (null when the profile
+      // never crosses — the panel labels that case honestly)
       let flip: number | null = null
       for (let i = 1; i < cum.length; i++) {
-        if (cum[i - 1].cum < 0 && cum[i].cum >= 0) { flip = cum[i].strike; break }
-        if (cum[i - 1].cum > 0 && cum[i].cum <= 0) { flip = cum[i].strike; break }
+        const a = cum[i - 1], b = cum[i]
+        if ((a.cum < 0 && b.cum >= 0) || (a.cum > 0 && b.cum <= 0)) {
+          const span = b.cum - a.cum
+          flip = span !== 0 ? a.strike + (b.strike - a.strike) * (-a.cum / span) : b.strike
+          break
+        }
       }
       // max pain: settlement price that minimises total option payout
       let maxPain: number | null = null, minPain = Infinity

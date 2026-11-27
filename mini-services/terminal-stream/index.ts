@@ -106,6 +106,9 @@ interface SymbolState {
   sweeps: SweepEv[]
   icebergs: IceEv[]
   medianNotional: number
+  bookTopAt: number           // last bookTicker receipt (bookTop source freshness)
+  recentIds: Set<number>      // recent aggTrade ids (REST/WS seam dedupe)
+  snapshotPushed: boolean     // a full snapshot was broadcast after warm-up
   // timers
   timers: ReturnType<typeof setInterval>[]
   lastSentTradeId: number
@@ -123,7 +126,8 @@ const state = (symbol: string): SymbolState => {
       bookTop: { b: 0, a: 0 },
       trades: [], klines: [], lastDepthPayload: '', heatCols: [], liqs: [],
       lv: new Map(), lastTradeAtP: new Map(), walls: [], pulls: [], sweeps: [], icebergs: [],
-      medianNotional: 0, timers: [], lastSentTradeId: 0, lastKlineSent: 0,
+      medianNotional: 0, bookTopAt: 0, recentIds: new Set(), snapshotPushed: false,
+      timers: [], lastSentTradeId: 0, lastKlineSent: 0,
     }
     S.set(symbol, s)
   }
@@ -343,6 +347,7 @@ function seedFromPartial(s: SymbolState) {
   if (!wasReady) {
     console.log(`[book] seeded ${s.symbol} from WS partial book: bids=${s.bids.size} asks=${s.asks.size}`)
     broadcastStatus(s)
+    broadcastSnapshot(s)
   }
 }
 
@@ -401,6 +406,10 @@ function handleSpot(s: SymbolState, msg: any) {
   const d = msg.data
   if (!d) return
   if (d.e === 'aggTrade') {
+    // REST history and the WS overlap at the seam — never store a trade twice
+    if (s.recentIds.has(d.a)) return
+    s.recentIds.add(d.a)
+    if (s.recentIds.size > 6000) { let n = 0; for (const id of s.recentIds) { s.recentIds.delete(id); if (++n >= 2000) break } }
     const p = +d.p, q = +d.q, t = d.T
     s.trades.push({ a: d.a, p, q, t, m: d.m })
     RING(s.trades, 8000)
@@ -450,8 +459,10 @@ function handleSpot(s: SymbolState, msg: any) {
     return
   }
   if (d.e === 'bookTicker' || (d.e === undefined && d.s && typeof d.b === 'string' && typeof d.a === 'string')) {
-    // instant best bid/ask — feeds bookTop relay (raw payload has no event type)
+    // instant best bid/ask — the ONLY source for the bookTop relay
+    // (raw payload has no event type)
     s.bookTop = { b: +d.b, a: +d.a }
+    s.bookTopAt = Date.now()
     return
   }
   if (d.U !== undefined && d.b && d.a && d.e === undefined) { handleBookDiff(s, d); return }
@@ -488,8 +499,14 @@ async function loadHistory(s: SymbolState) {
     jget(`https://api.binance.com/api/v3/aggTrades?symbol=${s.symbol}&limit=1000`).catch(() => []),
   ])
   s.klines = k.map((x: any[]) => ({ t: x[0], o: +x[1], h: +x[2], l: +x[3], c: +x[4], v: +x[5] }))
-  s.trades = (Array.isArray(tr) ? tr : []).map((x: any) => ({ a: +x.a, p: +x.p, q: +x.q, t: +x.T, m: !!x.m }))
-  s.trades.sort((a, b) => a.t - b.t)
+  const hist = (Array.isArray(tr) ? tr : []).map((x: any) => ({ a: +x.a, p: +x.p, q: +x.q, t: +x.T, m: !!x.m }))
+  hist.sort((a, b) => a.t - b.t)
+  // merge with any WS trades that arrived while REST was in flight (dedupe by id)
+  const byId = new Map<number, Trade>()
+  for (const t of [...hist, ...s.trades]) if (!byId.has(t.a)) byId.set(t.a, t)
+  s.trades = [...byId.values()].sort((a, b) => a.t - b.t)
+  RING(s.trades, 8000)
+  for (const t of s.trades) s.recentIds.add(t.a)
   s.lastSentTradeId = s.trades.length ? s.trades[s.trades.length - 1].a : 0
 }
 
@@ -534,8 +551,13 @@ async function ensureSymbol(symbol: string) {
   s.status = 'connecting'
   openSpotWs(s)
   openFutWs(s)
-  try { await loadHistory(s) } catch { s.lastError = 'history load failed' }
-  void syncBook(s).then(() => { medianNotional(s) })
+  // History loads in the BACKGROUND: the subscribe path must not wait on two
+  // REST round-trips before the client sees a snapshot. Feeds, timers and the
+  // book sync all start now; a full snapshot is broadcast when history lands.
+  void loadHistory(s)
+    .then(() => { broadcastSnapshot(s); broadcastStatus(s) })
+    .catch(() => { s.lastError = 'history load failed'; broadcastStatus(s) })
+  void syncBook(s).then(() => { medianNotional(s); broadcastSnapshot(s) })
   pollOi(s); pollMark(s)
   s.timers.push(setInterval(() => { // 250ms — heat column from local book
     emitHeatCol(s)
@@ -649,6 +671,13 @@ function snapshotHeatCols(s: SymbolState): HeatCol[] {
   return snapshotHistory(s.heatCols)
 }
 
+/** Push a full snapshot to every connected client (they filter by symbol). */
+function broadcastSnapshot(s: SymbolState) {
+  if (s.streams <= 0) return
+  s.snapshotPushed = true
+  io.emit('snapshot', snapshot(s))
+}
+
 function snapshot(s: SymbolState) {
   return {
     symbol: s.symbol,
@@ -657,6 +686,7 @@ function snapshot(s: SymbolState) {
     lastError: s.lastError ?? null,
     trades: s.trades.slice(-2500),
     klines: s.klines.slice(-1000),
+    bookTop: s.bookTop.b > 0 && s.bookTop.a > 0 ? { ...s.bookTop } : null,
     ticker: s.ticker ?? null,
     depth: topDepth(s),
     ladder: s.bookReady ? { bids: collectLevels(s.bids, false, 0, Infinity, 500), asks: collectLevels(s.asks, true, 0, Infinity, 500), t: Date.now() } : null,
@@ -695,12 +725,18 @@ io.on('connection', (socket) => {
     if (current) releaseSymbol(current)
     current = symbol
     const s = state(symbol)
-    // Send status immediately; send the snapshot once after initialization.
+    // Answer IMMEDIATELY with whatever is already buffered (warm symbols have
+    // full history), then warm the symbol up in the background — history and
+    // book readiness broadcast a fresh full snapshot when they land. The old
+    // flow awaited validation + history before ANY snapshot, which is why the
+    // page sat on CONNECTING for minutes on a cold symbol.
     socket.emit('status', { symbol, status: s.status, error: s.lastError ?? null })
-    await ensureSymbol(symbol)
-    if (!socket.connected || current !== symbol) return
     socket.emit('snapshot', snapshot(s))
-    socket.emit('status', { symbol, status: s.status, error: s.lastError ?? null })
+    void ensureSymbol(symbol).then(() => {
+      if (!socket.connected || current !== symbol) return
+      socket.emit('snapshot', snapshot(s))
+      socket.emit('status', { symbol, status: s.status, error: s.lastError ?? null })
+    })
   })
   socket.on('disconnect', () => { if (current) releaseSymbol(current) })
 })
@@ -719,10 +755,14 @@ setInterval(() => {
         s.lastSentTradeId = fresh[fresh.length - 1].a
       }
     }
-    // book top + depth (only when payload changed)
-    const bb = s.bookTop.b || best(s.bids)
-    const ba = s.bookTop.a || best(s.asks, true)
-    if (bb && ba) io.emit('bookTop', { symbol: s.symbol, b: bb, a: ba, t: Date.now() })
+    // book top: ONE consistent source — the spot bookTicker feed. The old
+    // relay fell back to the local book's best whenever the ticker value was
+    // unset, mixing two books and making the displayed spread jump between
+    // 1 tick and 1000+ ticks. If no bookTicker has arrived yet, emit nothing
+    // (the client honestly shows —) rather than a different book's top.
+    if (s.bookTop.b > 0 && s.bookTop.a > 0 && Date.now() - s.bookTopAt < 10_000) {
+      io.emit('bookTop', { symbol: s.symbol, b: s.bookTop.b, a: s.bookTop.a, t: Date.now() })
+    }
     const dep = topDepth(s)
     if (dep) {
       const payload = JSON.stringify(dep)

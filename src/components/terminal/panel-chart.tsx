@@ -12,6 +12,7 @@ import { usePoll, useHotkeys } from '@/lib/terminal/hooks'
 import { candleBucket } from '@/lib/terminal/candle-bucket.js'
 import TimeframePicker from './timeframe-picker'
 import { aggregate, timeframeMs, ema, bollinger, rsi, sessionVwap } from '@/lib/terminal/indicators'
+import { cvdSeriesUsd } from '@/lib/terminal/shared-metrics'
 import { levels as keyLevels } from '@/lib/terminal/analytics'
 import { metaFor, GREEN, RED, GRID, TEXT_DIM } from '@/lib/terminal/constants'
 import { fmtPrice, fmtCompact, fmtPct } from '@/lib/terminal/format'
@@ -44,6 +45,7 @@ export default function ChartPanel() {
   const baseRef = useRef<Candle[]>([])
   const syncedRef = useRef('')
   const hModeRef = useRef(false)
+  const hoverRef = useRef(false)
 
   const [ind, setInd] = useState({ ema20: true, ema50: true, bb: false, vwap: false, vol: true, rsi: true, whales: false, cvd: true, levels: false })
   const [hMode, setHMode] = useState(false)
@@ -144,8 +146,11 @@ export default function ChartPanel() {
     chart.subscribeCrosshairMove((param) => {
       const bar = param.seriesData.get(cs) as { open: number; high: number; low: number; close: number } | undefined
       const volBar = param.seriesData.get(vol) as { value: number } | undefined
-      if (bar && param.time) setLegend({ o: bar.open, h: bar.high, l: bar.low, c: bar.close, v: volBar?.value ?? 0 })
-      else {
+      if (bar && param.time) {
+        hoverRef.current = true
+        setLegend({ o: bar.open, h: bar.high, l: bar.low, c: bar.close, v: volBar?.value ?? 0 })
+      } else {
+        hoverRef.current = false
         const all = baseRef.current
         const last = all[all.length - 1]
         if (last) setLegend({ o: last.o, h: last.h, l: last.l, c: last.c, v: last.v })
@@ -185,8 +190,16 @@ export default function ChartPanel() {
     }
   }, [])
 
-  // ---- live merge + redraw driven by a 300ms poll tick
-  const tick = usePoll(() => getStream().klines.length, 300)
+  // ---- live merge + redraw driven by a 300ms poll tick.
+  // The tick MUST change on every intra-candle update: polling only the
+  // klines LENGTH (the old code) meant the forming candle — and the price
+  // axis last-price tag — refreshed at most once a minute and looked frozen
+  // tens of dollars away from the live ticker.
+  const tick = usePoll(() => {
+    const k = getStream().klines
+    const l = k[k.length - 1]
+    return l ? `${k.length}|${l.t}|${l.c}|${l.h}|${l.l}|${l.v}` : 'empty'
+  }, 300)
   useEffect(() => {
     if (!ready || !candleRef.current) return
     const tfMs = timeframeMs(timeframe)
@@ -209,6 +222,11 @@ export default function ChartPanel() {
     }
     if (!merged.length) return
     baseRef.current = merged
+    // live OHLC legend for the forming candle (crosshair hover overrides it)
+    if (!hoverRef.current) {
+      const lastM = merged[merged.length - 1]
+      setLegend({ o: lastM.o, h: lastM.h, l: lastM.l, c: lastM.c, v: lastM.v })
+    }
 
     const key = `${symbol}|${timeframe}|${merged[0].t}|${merged.length}`
     const fullSync = key !== syncedRef.current
@@ -218,11 +236,20 @@ export default function ChartPanel() {
     const bb = bollinger(closes, 20, 2)
     const vw = sessionVwap(merged)
     const R = rsi(closes, 14)
+    // At 1m the RSI pane plots the canonical series computed from the stream
+    // klines themselves (shared-metrics basis), so its last value is the
+    // same number Sentiment / Signals / Insights display.
+    const streamK = getStream().klines
+    const useStreamRsi = tfMs <= 60_000 && streamK.length > 20
+    const RStream = useStreamRsi ? rsi(streamK.map((c) => c.c), 14) : null
 
     const toBar = (c: Candle) => ({ time: (c.t / 1000) as UTCTimestamp, open: c.o, high: c.h, low: c.l, close: c.c })
     const toVol = (c: Candle) => ({ time: (c.t / 1000) as UTCTimestamp, value: c.v, color: c.c >= c.o ? 'rgba(22,199,132,0.45)' : 'rgba(234,57,67,0.45)' })
     const lineData = (arr: (number | null)[]) =>
       arr.map((v, i) => (v == null ? null : { time: (merged[i].t / 1000) as UTCTimestamp, value: v })).filter(Boolean) as { time: UTCTimestamp; value: number }[]
+    const rsiData = useStreamRsi && RStream
+      ? streamK.map((c, i) => (RStream[i] == null ? null : { time: (c.t / 1000) as UTCTimestamp, value: RStream[i] as number })).filter(Boolean) as { time: UTCTimestamp; value: number }[]
+      : lineData(R)
 
     if (fullSync) {
       candleRef.current.setData(merged.map(toBar))
@@ -238,7 +265,7 @@ export default function ChartPanel() {
       apply('bbU', bb.upper, ind.bb)
       apply('bbL', bb.lower, ind.bb)
       apply('vwap', vw, ind.vwap)
-      if (rsiRef.current) rsiRef.current.setData(lineData(R))
+      if (rsiRef.current) rsiRef.current.setData(rsiData)
       syncedRef.current = key
     } else {
       const last = merged[merged.length - 1]
@@ -254,7 +281,15 @@ export default function ChartPanel() {
       upd('bbU', bb.upper, ind.bb)
       upd('bbL', bb.lower, ind.bb)
       upd('vwap', vw, ind.vwap)
-      if (rsiRef.current && R[R.length - 1] != null) rsiRef.current.update({ time: (last.t / 1000) as UTCTimestamp, value: R[R.length - 1] as number })
+      if (rsiRef.current) {
+        if (useStreamRsi && RStream) {
+          const sk = streamK[streamK.length - 1]
+          const sv = RStream[RStream.length - 1]
+          if (sk && sv != null) rsiRef.current.update({ time: (sk.t / 1000) as UTCTimestamp, value: sv })
+        } else if (R[R.length - 1] != null) {
+          rsiRef.current.update({ time: (last.t / 1000) as UTCTimestamp, value: R[R.length - 1] as number })
+        }
+      }
     }
 
     // whale markers from recent stream trades (≥ $250k prints)
@@ -284,22 +319,12 @@ export default function ChartPanel() {
       } else markersApi.current.setMarkers([])
     }
 
-    // ---- CVD pane from the live trade window (bucketed to the timeframe)
+    // ---- CVD pane: shared USD computation (shared-metrics), same formula
+    // as every other panel — values are USD, not coin units.
     if (cvdRef.current) {
       if (ind.cvd && merged.length) {
-        const trades = getStream().trades
-        const buckets = new Map<number, number>()
-        for (const t of trades) {
-          const b = candleBucket(t.t, tfMs)
-          const n = t.p * t.q
-          buckets.set(b, (buckets.get(b) ?? 0) + (t.m ? -n : n))
-        }
-        const sorted = [...buckets.entries()].sort((a, b) => a[0] - b[0])
-        let cum = 0
-        cvdRef.current.setData(sorted.map(([t, v]) => {
-          cum += v
-          return { time: (t / 1000) as UTCTimestamp, value: cum }
-        }))
+        cvdRef.current.setData(cvdSeriesUsd(getStream().trades, tfMs)
+          .map((p) => ({ time: (p.t / 1000) as UTCTimestamp, value: p.v })))
       } else cvdRef.current.setData([])
     }
   }, [tick, ready, symbol, timeframe, ind])
@@ -418,7 +443,7 @@ export default function ChartPanel() {
               <span className="text-muted-foreground">Vol <span className="text-foreground/90">{fmtCompact(legend.v)}</span></span>
               {atrVal != null && <span className="text-muted-foreground">ATR14 <span className="text-foreground/90">{fmtPrice(atrVal, meta.tick)}</span></span>}
               {lastDelta != null && (
-                <span className="text-muted-foreground">Δ <span className={lastDelta >= 0 ? 'text-[#16c784]' : 'text-[#ea3943]'}>{lastDelta >= 0 ? '+' : ''}{lastDelta.toFixed(2)}</span></span>
+                <span className="text-muted-foreground">Δ <span className={lastDelta >= 0 ? 'text-[#16c784]' : 'text-[#ea3943]'}>{lastDelta >= 0 ? '+' : ''}{lastDelta.toFixed(2)} {meta.label.split('/')[0]}</span></span>
               )}
             </>
           )}
@@ -437,7 +462,7 @@ export default function ChartPanel() {
           {ind.cvd && (
             <>
               <div className="flex items-center gap-2 px-2 pt-1 text-[10px] text-muted-foreground">
-                <span>CVD — cumulative volume delta (live window)</span>
+                <span>CVD (USD) — cumulative volume delta, live window</span>
                 <span className="text-muted-foreground/70">rising = aggressive buying dominates</span>
                 <SourceBadge label="live" />
               </div>

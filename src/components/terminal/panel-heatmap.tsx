@@ -27,7 +27,21 @@ const clock = (ts: number) => new Date(ts).toISOString().slice(11, 19)
 
 function captureFeed() {
   const s = getStream()
-  return { ...s, heatCols: s.heatCols.slice(), trades: s.trades.slice(), klines: s.klines.map(c => ({ ...c })), liqs: s.liqs.slice(), walls: s.walls.slice(), plan: decisionLevels(), observedAt: now() }
+  let heatCols = s.heatCols.slice()
+  // Fallback: if ladder columns are missing or have gone stale while the
+  // live book (ladder/depth) is flowing, synthesize the current column from
+  // the ladder so the map renders the same book the rail shows instead of
+  // sitting blank. Marked 'partial' — it is a current snapshot, not history.
+  const lastCol = heatCols[heatCols.length - 1]
+  if (s.ladder && s.ladder.bids.length && s.ladder.asks.length && (!lastCol || now() - lastCol.t > 3000)) {
+    const mid = s.bookTop && s.bookTop.b > 0 && s.bookTop.a > 0
+      ? (s.bookTop.b + s.bookTop.a) / 2
+      : (s.ladder.bids[0].p + s.ladder.asks[0].p) / 2
+    heatCols = [...heatCols, { t: now(), mid, bids: s.ladder.bids, asks: s.ladder.asks, bookMode: 'partial' as const, sourceAt: now() }]
+  }
+  let plan: ReturnType<typeof decisionLevels> | null = null
+  try { plan = decisionLevels() } catch { /* plan lines are optional */ }
+  return { ...s, heatCols, trades: s.trades.slice(), klines: s.klines.map(c => ({ ...c })), liqs: s.liqs.slice(), walls: s.walls.slice(), plan, observedAt: now() }
 }
 
 export default function HeatmapPanel() {
@@ -139,7 +153,7 @@ function HeatmapWorkspace({ symbol }: { symbol: string }) {
     if (showPlan) {
       const manual = (['entry', 'stop', 'target'] as const).filter(k => Number(manualPlan[k]) > 0 && Number.isFinite(Number(manualPlan[k])))
       if (manual.length) for (const k of manual) result.push({ id: `manual-${k}`, price: Number(manualPlan[k]), label: `My ${k}`, kind: 'custom', color: k === 'stop' ? '#fb7185' : k === 'target' ? '#34d399' : '#7dd3fc', note: 'Manually entered planning level. It does not place an order.' })
-      else if (!historical) result.push(...planLines(data.plan.buyAbove, data.plan.sellBelow))
+      else if (!historical) result.push(...planLines(data.plan?.buyAbove ?? null, data.plan?.sellBelow ?? null))
       else {
         const ask = analysis.zones.filter(z => z.side === 'ask' && z.price > mid).sort((a, b) => a.price - b.price)[0]
         const bid = analysis.zones.filter(z => z.side === 'bid' && z.price < mid).sort((a, b) => b.price - a.price)[0]

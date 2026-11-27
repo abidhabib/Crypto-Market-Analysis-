@@ -4,7 +4,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { useTerminal } from '@/lib/terminal/store'
 import { getStream } from '@/lib/terminal/stream-client'
 import { usePoll } from '@/lib/terminal/hooks'
-import { ema, rsi, atr, timeframeMs, aggregate } from '@/lib/terminal/indicators'
+import { ema, atr, timeframeMs, aggregate } from '@/lib/terminal/indicators'
+import { sharedRsi1m } from '@/lib/terminal/shared-metrics'
 import { fmtPct, fmtClock } from '@/lib/terminal/format'
 import { PanelHeader, Meter, StatCard, AsOf, toneColor } from './panel-kit'
 import { cn } from '@/lib/utils'
@@ -37,12 +38,19 @@ export default function SentimentPanel() {
     return () => { alive = false; clearInterval(id) }
   }, [symbol])
 
-  const klines = usePoll(() => getStream().klines, 5000)
+  // Poll a primitive signature of the kline series — the array itself is
+  // mutated in place by the stream client, so memoizing on its reference
+  // would freeze these gauges at first render.
+  const kTick = usePoll(() => { const k = getStream().klines; return k.length ? k[k.length - 1].t + k.length : 0 }, 2000)
   const computed = useMemo(() => {
+    const klines = getStream().klines
     const h1 = aggregate(klines, timeframeMs('1h'))
     const closes = klines.map((c) => c.c)
-    const R = rsi(closes, 14)
-    const rsiNow = R[R.length - 1] ?? null
+    // RSI comes from the SHARED computation (shared-metrics) — the same
+    // Wilder RSI-14 over the stream's 1m closes every other panel shows.
+    // (This panel previously ran its own rsi() over a possibly-stale klines
+    // snapshot, which is how four different RSI values reached the screen.)
+    const rsiNow = sharedRsi1m()
     const E = ema(closes, 50)
     const emaNow = E[E.length - 1] ?? null
     const priceNow = closes[closes.length - 1] ?? null
@@ -62,7 +70,8 @@ export default function SentimentPanel() {
     }
     const mom = priceNow && emaNow ? ((priceNow - emaNow) / emaNow) * 100 : null
     return { rsiNow, mom, atrPct, atrRank, priceNow }
-  }, [klines])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kTick])
 
   const mark = usePoll(() => getStream().mark, 1000)
 
@@ -152,6 +161,14 @@ export default function SentimentPanel() {
     return den ? num / den : 0
   }, [readings])
 
+  // The consensus is only meaningful once ALL of its inputs exist: the API
+  // gauges (F&G, long/short, taker), the futures mark, and the computed
+  // gauges (RSI, momentum). Publishing a number from whichever subset has
+  // landed so far made it swing wildly (−46 → −8) during load.
+  const EXPECTED_GAUGES = 7
+  const loadedGauges = readings.filter((r) => r.weight > 0).length
+  const consensusReady = data != null && mark != null && computed.rsiNow != null && computed.mom != null
+
   const label = consensus > 25 ? 'Bullish' : consensus < -25 ? 'Bearish' : 'Mixed'
 
   return (
@@ -167,19 +184,27 @@ export default function SentimentPanel() {
         <div className="flex flex-col gap-2">
           <div className="rounded-md border border-border/60 bg-card/60 p-4">
             <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Consensus (weighted)</div>
-            <div className="mt-2 flex items-end justify-between">
-              <span className="text-3xl font-bold font-mono" style={{ color: toneColor(consensus) }}>{consensus >= 0 ? '+' : ''}{consensus.toFixed(0)}</span>
-              <span className="text-sm font-semibold" style={{ color: toneColor(consensus) }}>{label}</span>
-            </div>
-            <div className="relative mt-3 h-2 rounded-full bg-muted">
-              <div className="absolute inset-y-0 left-1/2 w-px bg-border" />
-              <div className="absolute inset-y-0 rounded-full" style={{
-                left: `${Math.min(50, 50 + consensus / 2)}%`,
-                width: `${Math.abs(consensus) / 2}%`,
-                background: toneColor(consensus),
-              }} />
-            </div>
-            <div className="mt-1 flex justify-between text-[9px] text-muted-foreground"><span>−100 bearish</span><span>0</span><span>bullish +100</span></div>
+            {consensusReady ? (
+              <>
+                <div className="mt-2 flex items-end justify-between">
+                  <span className="text-3xl font-bold font-mono" style={{ color: toneColor(consensus) }}>{consensus >= 0 ? '+' : ''}{consensus.toFixed(0)}</span>
+                  <span className="text-sm font-semibold" style={{ color: toneColor(consensus) }}>{label}</span>
+                </div>
+                <div className="relative mt-3 h-2 rounded-full bg-muted">
+                  <div className="absolute inset-y-0 left-1/2 w-px bg-border" />
+                  <div className="absolute inset-y-0 rounded-full" style={{
+                    left: `${Math.min(50, 50 + consensus / 2)}%`,
+                    width: `${Math.abs(consensus) / 2}%`,
+                    background: toneColor(consensus),
+                  }} />
+                </div>
+                <div className="mt-1 flex justify-between text-[9px] text-muted-foreground"><span>−100 bearish</span><span>0</span><span>bullish +100</span></div>
+              </>
+            ) : (
+              <div className="mt-2 text-xs text-muted-foreground" role="status">
+                Collecting gauges — {loadedGauges} of {EXPECTED_GAUGES} inputs in. The consensus is published only when every gauge has loaded, so it can&apos;t swing as data arrives.
+              </div>
+            )}
             {data?.fng?.history?.length ? (
               <div className="mt-3">
                 <div className="text-[10px] text-muted-foreground">Fear & Greed, 30d</div>

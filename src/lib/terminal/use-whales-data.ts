@@ -94,5 +94,9 @@ export function useWhalesData(symbol: string, timeframe: string) {
 
   const stopHistory = useCallback(() => { stopBackfill.current = true }, [])
   const retryHistory = useCallback(() => { totalLoaded.current = 0; cursor.current = null; setHistoryRequest(n => n + 1) }, [])
-  return { feed, trades, candles: candleHistory.timeframe === timeframe ? candleHistory.candles : [], history, candleError, stopHistory, retryHistory }
+  // The backfill counter must reflect what the recording actually holds:
+  // live trades merge into `trades` continuously, so reporting only the
+  // HTTP-page count sat at "0 / 40K" while thousands of live trades were
+  // already recorded.
+  return { feed, trades, candles: candleHistory.timeframe === timeframe ? candleHistory.candles : [], history: { ...history, count: Math.max(history.count, trades.length) }, candleError, stopHistory, retryHistory }
 }

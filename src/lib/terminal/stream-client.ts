@@ -25,6 +25,8 @@ interface StreamState {
   heatCols: HeatCol[]        // oldest first
   mark: Snapshot['mark']
   oi: Snapshot['oi']
+  oiHistory: { oi: number; t: number; usd: number }[] // accumulated from live OI events
+  hasSnapshot: boolean
   liqs: Liq[]                // newest last
   bookTop: { b: number; a: number } | null
   walls: WallRec[]
@@ -49,6 +51,8 @@ const state: StreamState = {
   heatCols: [],
   mark: null,
   oi: null,
+  oiHistory: [],
+  hasSnapshot: false,
   liqs: [],
   bookTop: null,
   walls: [],
@@ -64,12 +68,22 @@ let socket: Socket | null = null
 let wanted = 'BTCUSDT'
 const listeners = new Set<() => void>()
 
+/** Keep the displayed 24h range honest: live prices widen it immediately. */
+function widenRange(price: number) {
+  if (!state.ticker || !isFinite(price) || price <= 0) return
+  if (price > state.ticker.h) state.ticker = { ...state.ticker, h: price }
+  if (price < state.ticker.l) state.ticker = { ...state.ticker, l: price }
+}
+
 function applySnapshot(snap: Snapshot) {
   if (snap.symbol !== wanted) return
   state.serverOffset = snap.serverTime - Date.now()
   state.status = snap.status
   state.lastError = snap.lastError
-  state.trades = snap.trades ?? []
+  // dedupe by aggTrade id (server REST/WS seam can overlap) and order by id
+  const byId = new Map<number, Trade>()
+  for (const t of snap.trades ?? []) if (!byId.has(t.a)) byId.set(t.a, t)
+  state.trades = [...byId.values()].sort((a, b) => a.a - b.a)
   state.klines = snap.klines ?? []
   state.ticker = snap.ticker
   state.depth = snap.depth
@@ -77,16 +91,31 @@ function applySnapshot(snap: Snapshot) {
   state.heatCols = snap.heatCols ?? []
   state.mark = snap.mark
   state.oi = snap.oi
+  if (snap.oi) pushOiHistory(snap.oi)
+  state.hasSnapshot = true
   state.liqs = snap.liqs ?? []
-  state.bookTop = snap.depth ? { b: snap.depth.bids[0]?.p ?? 0, a: snap.depth.asks[0]?.p ?? 0 } : null
+  // bookTop comes ONLY from the bookTicker-fed snapshot field — never from
+  // depth — so the header and the order-book rail share one source.
+  state.bookTop = snap.bookTop && snap.bookTop.b > 0 && snap.bookTop.a > 0 ? snap.bookTop : state.bookTop
   state.walls = snap.walls ?? []
   state.pulls = snap.pulls ?? []
   state.sweeps = snap.sweeps ?? []
   state.icebergs = snap.icebergs ?? []
   state.lastMsgAt = Date.now()
   const lastSnapTrade = state.trades[state.trades.length - 1]
-  if (lastSnapTrade) state.lastTradeA = Math.max(state.lastTradeA, lastSnapTrade.a)
+  if (lastSnapTrade) {
+    state.lastTradeA = Math.max(state.lastTradeA, lastSnapTrade.a)
+    widenRange(lastSnapTrade.p)
+  }
   listeners.forEach((l) => l())
+}
+
+function pushOiHistory(oi: { oi: number; t: number }) {
+  const px = state.mark?.p ?? state.ticker?.c ?? 0
+  const last = state.oiHistory[state.oiHistory.length - 1]
+  if (last && oi.t - last.t < 4000) { last.oi = oi.oi; last.usd = px > 0 ? oi.oi * px : last.usd; return }
+  state.oiHistory.push({ oi: oi.oi, t: oi.t, usd: px > 0 ? oi.oi * px : 0 })
+  if (state.oiHistory.length > 720) state.oiHistory.splice(0, state.oiHistory.length - 720)
 }
 
 function ensureSocket(): Socket {
@@ -113,7 +142,11 @@ function ensureSocket(): Socket {
     state.lastError = 'Market data connection lost; reconnecting'
     listeners.forEach(l => l())
   })
-  socket.on('connect_error', (err) => console.warn('[stream] connect_error:', err.message))
+  socket.on('connect_error', (err) => {
+    console.warn('[stream] connect_error:', err.message)
+    state.lastError = `stream connection error: ${err.message} — retrying`
+    listeners.forEach((l) => l())
+  })
   socket.on('connect', () => console.info('[stream] connected via', socket!.io.engine.transport.name))
   socket.on('connect', () => socket!.emit('subscribe', { symbol: wanted }))
   socket.on('snapshot', applySnapshot)
@@ -130,6 +163,7 @@ function ensureSocket(): Socket {
     if (!fresh.length) return
     state.lastTradeA = fresh[fresh.length - 1].a
     state.trades.push(...fresh)
+    widenRange(fresh[fresh.length - 1].p)
     state.lastTradeReceivedAt = Date.now()
     if (state.trades.length > 6000) state.trades.splice(0, state.trades.length - 6000)
     state.lastMsgAt = Date.now()
@@ -147,12 +181,17 @@ function ensureSocket(): Socket {
     const last = state.klines[state.klines.length - 1]
     if (last && last.t === k.t) state.klines[state.klines.length - 1] = k
     else if (!last || k.t > last.t) { state.klines.push(k); if (state.klines.length > 1100) state.klines.shift() }
+    widenRange(k.c)
     state.lastMsgAt = Date.now()
     listeners.forEach((l) => l())
   })
   socket.on('ticker', (e: { symbol: string; ticker: Snapshot['ticker'] }) => {
     if (e.symbol !== wanted) return
     state.ticker = e.ticker
+    // the rolling 24h window can lag a fast move — never let it contradict
+    // prices already seen live in this session
+    const px = state.trades[state.trades.length - 1]?.p ?? state.klines[state.klines.length - 1]?.c
+    if (px) widenRange(px)
     listeners.forEach((l) => l())
   })
   socket.on('mark', (e: { symbol: string; mark: Snapshot['mark'] }) => {
@@ -164,6 +203,7 @@ function ensureSocket(): Socket {
   socket.on('oi', (e: { symbol: string; oi: Snapshot['oi'] }) => {
     if (e.symbol !== wanted) return
     state.oi = e.oi
+    if (e.oi) pushOiHistory(e.oi)
     listeners.forEach((l) => l())
   })
   socket.on('liq', (e: { symbol: string; liq: Liq }) => {
@@ -219,6 +259,7 @@ export function setStreamSymbol(symbol: string) {
   // reset buffers so stale data for the previous symbol is never shown
   state.symbol = symbol
   state.trades = []; state.klines = []; state.heatCols = []; state.liqs = []
+  state.oiHistory = []; state.hasSnapshot = false
   state.ticker = null; state.depth = null; state.ladder = null; state.mark = null; state.oi = null
   state.bookTop = null; state.walls = []; state.pulls = []; state.sweeps = []; state.icebergs = []
   state.status = 'connecting'

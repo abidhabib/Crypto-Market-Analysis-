@@ -93,7 +93,7 @@ function FootprintWorkspace({ symbol }: { symbol: string }) {
     ctx.setTransform(el.width / size.w, 0, 0, el.height / size.h, 0, 0)
     drawFootprintCursor(ctx, view, pointer)
   }, true, 16)
-  const totals = bars.reduce((v, b) => ({ buy: v.buy + b.buy, sell: v.sell + b.sell, usd: v.usd + b.buyUsd + b.sellUsd, count: v.count + b.count }), { buy: 0, sell: 0, usd: 0, count: 0 })
+  const totals = bars.reduce((v, b) => ({ buy: v.buy + b.buy, sell: v.sell + b.sell, buyUsd: v.buyUsd + b.buyUsd, sellUsd: v.sellUsd + b.sellUsd, usd: v.usd + b.buyUsd + b.sellUsd, count: v.count + b.count }), { buy: 0, sell: 0, buyUsd: 0, sellUsd: 0, usd: 0, count: 0 })
   const live = !frozen && feed.status === 'live' && feed.receivedAt > 0 && feed.clientNow - feed.receivedAt < 15000
   const next = selected && all.find(b => b.t === selected.end)
   const previous = selected && all.find(b => b.end === selected.t)
@@ -123,9 +123,13 @@ function FootprintWorkspace({ symbol }: { symbol: string }) {
       <button type="button" onClick={loadMore} disabled={!!frozen || history.loading || history.exhausted} className="text-neutral-300 underline decoration-neutral-700 underline-offset-2 disabled:text-neutral-600">{frozen ? 'Resume to load history' : history.loading ? 'Loading history…' : history.exhausted ? 'History limit reached' : history.error ? 'Retry history' : 'Load older trades'}</button>
       {history.error && <span role="status" className="text-amber-300">{history.error}</span>}
     </div>
-    <div className="grid shrink-0 grid-cols-3 divide-x divide-white/[0.06] border-b border-white/[0.08] text-[10px]">
+    <div className="grid shrink-0 grid-cols-4 divide-x divide-white/[0.06] border-b border-white/[0.08] text-[10px]">
       <Metric label="Visible volume · USDT" value={fmtCompact(totals.usd, '$')} />
-      <Metric label="Visible CVD · coin" value={signed(totals.buy - totals.sell)} tone={totals.buy >= totals.sell ? 'text-emerald-400' : 'text-rose-400'} />
+      <Metric label={`Visible volume · ${symbol.replace(/USDT$/, '')}`} value={volume(totals.buy + totals.sell)} />
+      {/* CVD in USD via the shared formula (Σ ±p·q over the same visible
+          trades as the volume metrics above — shared-metrics tradeDeltaUsd),
+          so the three numbers can never silently disagree. */}
+      <Metric label="Visible CVD · USD" value={fmtCompact(totals.buyUsd - totals.sellUsd, '$')} tone={totals.buyUsd >= totals.sellUsd ? 'text-emerald-400' : 'text-rose-400'} />
       <Metric label="Buy share · coin" value={totals.buy + totals.sell ? `${(totals.buy / (totals.buy + totals.sell) * 100).toFixed(1)}%` : '—'} />
     </div>
     <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/[0.07] px-3 py-2 text-[10px] text-neutral-500">
@@ -161,7 +165,7 @@ function FootprintWorkspace({ symbol }: { symbol: string }) {
             <p className="mt-2 text-neutral-400">Candle Δ {signed(hover.bar.delta)} coin · {hover.bar.deltaPct.toFixed(1)}%</p>
           </div>}
         </div>
-        <div className="flex shrink-0 flex-wrap justify-between gap-1 border-t border-white/[0.07] px-3 py-1.5 text-[9px] text-neutral-500"><span>Scroll / pinch: zoom · Drag: pan · Tap: inspect</span><span>Stats: {symbol.replace(/USDT$/, '')} · CVD*: visible sum · UTC · row {fmtPrice(step, meta.tick)}</span></div>
+        <div className="flex shrink-0 flex-wrap justify-between gap-1 border-t border-white/[0.07] px-3 py-1.5 text-[9px] text-neutral-500"><span>Scroll / pinch: zoom · Drag: pan · Tap: inspect</span><span>Stats: {symbol.replace(/USDT$/, '')} · CVD: visible-window USD sum (shared formula) · UTC · row {fmtPrice(step, meta.tick)}</span></div>
       </div>
       <aside className="shrink-0 space-y-3 bg-[#111111] p-3 text-[11px] xl:w-[280px] xl:overflow-y-auto xl:border-l xl:border-white/10" aria-label="Selected footprint candle analysis">
         <div className="flex items-center justify-between text-[10px] text-neutral-500"><span>Selected candle</span><span>{selected ? `${utc(selected.t)} UTC` : '—'}</span></div>

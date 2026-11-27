@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic'
 import { Mail, Globe } from 'lucide-react'
 import { useTerminal } from '@/lib/terminal/store'
 import { getStream, subscribeStream } from '@/lib/terminal/stream-client'
-import { useHotkeys } from '@/lib/terminal/hooks'
+import { useHotkeys, usePoll } from '@/lib/terminal/hooks'
 import { TABS, type TabId } from '@/lib/terminal/constants'
 import TopBar from './top-bar'
 import TabBar from './tab-bar'
@@ -52,8 +52,23 @@ const RAIL_TABS = new Set<TabId>(['chart', 'profile', 'tape', 'l3', 'signals'])
 export default function Terminal() {
   const { tab, setTab, railOpen, toggleRail } = useTerminal()
   const [status, setStatus] = useState<'connecting' | 'live' | 'offline'>('connecting')
+  // Sync progress while the feed warms up: which pieces have actually
+  // arrived, so "CONNECTING" is a measurable state, not a dead end. The
+  // socket reconnects on its own; no reload is ever required.
+  const sync = usePoll(() => {
+    const s = getStream()
+    return {
+      status: s.status,
+      candles: s.klines.length,
+      book: !!s.depth,
+      trades: s.trades.length,
+      snapshot: s.hasSnapshot,
+      error: s.lastError,
+    }
+  }, 500)
 
   useEffect(() => {
+    setStatus(getStream().status)
     const un = subscribeStream(() => setStatus(getStream().status))
     return () => { un() }
   }, [])
@@ -69,6 +84,16 @@ export default function Terminal() {
   return (
     <div className="trading-terminal dark flex h-[100dvh] flex-col overflow-hidden bg-background text-foreground">
       <TopBar status={status} />
+      {status !== 'live' && (
+        <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-0.5 border-b border-[#f0b90b]/25 bg-[#f0b90b]/5 px-3 py-1 font-mono text-[10px] text-[#f0b90b]" role="status">
+          <span>{status === 'offline' ? 'FEED OFFLINE — reconnecting automatically' : 'SYNCING MARKET FEED'}</span>
+          <span className="text-muted-foreground">snapshot {sync.snapshot ? '✓' : '…'}</span>
+          <span className="text-muted-foreground">candles {sync.candles > 0 ? `✓ ${sync.candles}` : '…'}</span>
+          <span className="text-muted-foreground">order book {sync.book ? '✓' : '…'}</span>
+          <span className="text-muted-foreground">trades {sync.trades > 0 ? `✓ ${sync.trades}` : '…'}</span>
+          {sync.error && <span className="text-[#ea3943]">{sync.error}</span>}
+        </div>
+      )}
       <TabBar />
       <main className="flex min-h-0 flex-1" role="main">
         <section className="min-w-0 flex-1" aria-label={`${tab} panel`}>

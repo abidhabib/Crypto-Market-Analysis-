@@ -6,6 +6,8 @@
  */
 
 import { getStream, now } from './stream-client'
+import { rsiFromCloses, cvdUsdFromTrades } from './shared-metrics'
+import { valueArea } from './indicators'
 import type { Candle, Trade, WallRec } from './types'
 import { metaFor } from './constants'
 
@@ -39,22 +41,8 @@ export function ema(values: number[], period: number): number {
   return e
 }
 
-export function rsi(closes: number[], period = 14): number {
-  if (closes.length < period + 1) return NaN
-  let gain = 0, loss = 0
-  for (let i = 1; i <= period; i++) {
-    const d = closes[i] - closes[i - 1]
-    if (d >= 0) gain += d; else loss -= d
-  }
-  gain /= period; loss /= period
-  for (let i = period + 1; i < closes.length; i++) {
-    const d = closes[i] - closes[i - 1]
-    gain = (gain * (period - 1) + Math.max(0, d)) / period
-    loss = (loss * (period - 1) + Math.max(0, -d)) / period
-  }
-  if (loss === 0) return 100
-  return 100 - 100 / (1 + gain / loss)
-}
+// NOTE: RSI lives in shared-metrics.ts (rsiFromCloses) — the single canonical
+// implementation every panel uses. Do not re-add a local variant here.
 
 export function atr(candles: Candle[], period = 14): number {
   if (candles.length < period + 1) return NaN
@@ -138,8 +126,10 @@ export function regime(): Regime | null {
 
   return {
     label, dir, strength,
-    rsi1m: rsi(closes1m.slice(-60), 14),
-    rsi15m: rsi(closes15.slice(-40), 14),
+    // canonical RSI (shared-metrics): full buffered series, never a short
+    // slice — sliced Wilder seeding is why panels disagreed with each other
+    rsi1m: rsiFromCloses(closes1m) ?? NaN,
+    rsi15m: rsiFromCloses(closes15) ?? NaN,
     atrPct: (atrNow / price) * 100,
     volPctile, volLabel,
     ema21_1m: e21, ema50_1m: e50, price,
@@ -166,7 +156,10 @@ export function flow(): Flow | null {
   const tNow = trades[trades.length - 1].t
   const back = (ms: number) => tNow - ms
 
-  let cvdSession = 0, cvd30 = 0, cvd5 = 0
+  // CVD values come from the one shared computation (shared-metrics)
+  const cvdSession = cvdUsdFromTrades(trades)
+  const cvd30 = cvdUsdFromTrades(trades, back(1_800_000))
+  const cvd5 = cvdUsdFromTrades(trades, back(300_000))
   let buy1 = 0, tot1 = 0, buy15 = 0, tot15 = 0
   let buy10 = 0
   let count10m = 0
@@ -175,11 +168,8 @@ export function flow(): Flow | null {
 
   for (const tr of trades) {
     const n = tr.p * tr.q
-    const b = tr.m ? -n : n
-    cvdSession += b
-    if (tr.t >= back(1_800_000)) { cvd30 += b; count10m++ }
+    if (tr.t >= back(1_800_000)) { count10m++ }
     if (tr.t >= back(300_000)) {
-      cvd5 += b
       if (!tr.m) buy15 += n
       tot15 += n
     }
@@ -294,7 +284,11 @@ export function levels(): Levels {
   const col = st.heatCols[st.heatCols.length - 1]
   const mid = st.bookTop ? (st.bookTop.b + st.bookTop.a) / 2 : col ? col.mid : 0
 
-  // volume profile over last 4h of 1m klines
+  // volume profile over last 4h of 1m klines. The value area is built by
+  // expanding outward from the POC until 70% of volume is covered, so the
+  // POC is inside [VAL, VAH] BY CONSTRUCTION. (The old tail-trim method —
+  // cutting 15% off each end independently — could leave the POC outside
+  // its own value area on skewed distributions.)
   let poc: number | null = null, vah: number | null = null, val: number | null = null
   const k4 = st.klines.filter((k) => k.t >= now() - 4 * 3_600_000)
   if (k4.length > 30 && mid > 0) {
@@ -304,16 +298,10 @@ export function levels(): Levels {
       const b = Math.round(((k.h + k.l + k.c) / 3) / bin) * bin
       vols.set(b, (vols.get(b) ?? 0) + k.v * k.c)
     }
-    const arr = [...vols.entries()].sort((a, b) => a[0] - b[0])
-    const total = arr.reduce((a, b) => a + b[1], 0)
-    let best = 0
-    for (const [p, v] of arr) if (v > best) { best = v; poc = p }
-    let acc = 0
-    let lo: number | null = null, hi: number | null = null
-    for (const [p, v] of arr) { acc += v; if (acc >= total * 0.15 && lo === null) lo = p }
-    acc = 0
-    for (let i = arr.length - 1; i >= 0; i--) { acc += arr[i][1]; if (acc >= total * 0.15 && hi === null) hi = arr[i][0] }
-    val = lo; vah = hi
+    const bins = [...vols.entries()].sort((a, b) => a[0] - b[0])
+      .map(([price, v]) => ({ price, buy: v, sell: 0 }))
+    const va = valueArea(bins)
+    if (va) { poc = va.poc; vah = va.vah; val = va.val }
   }
 
   // session = last 24h from 1m klines
@@ -356,6 +344,9 @@ export interface Signal {
   targetCost: number | null
   passedCount: number
   total: number
+  /** Taker-buy share aligned to the signal direction (1 − raw for shorts).
+   *  The single driver number every widget on the Signals screen shows. */
+  driverAligned: number
 }
 
 export function signal(): Signal | null {
@@ -370,6 +361,7 @@ export function signal(): Signal | null {
       state: 'PAUSED', direction: null,
       verdict: st.status !== 'live' ? 'waiting for the live stream to connect' : 'order book syncing — metrics arming up',
       checklist: [], rr: null, targetCost: null, passedCount: 0, total: 6,
+      driverAligned: f ? (f.driver15m) : 0.5,
     }
   }
   const meta = metaFor(st.symbol)
@@ -436,7 +428,7 @@ export function signal(): Signal | null {
     verdict = `Leaning ${direction} (${r.label}) but waiting: ${unmet.slice(0, 2).map((c) => c.label.toLowerCase()).join(' & ')} not confirmed`
   }
 
-  return { state, direction, verdict, checklist, rr, targetCost, passedCount, total: checklist.length }
+  return { state, direction, verdict, checklist, rr, targetCost, passedCount, total: checklist.length, driverAligned }
 }
 
 // ---------------------------------------------------------------- insights feed
