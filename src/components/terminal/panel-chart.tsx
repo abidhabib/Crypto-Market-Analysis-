@@ -12,7 +12,7 @@ import { usePoll, useHotkeys } from '@/lib/terminal/hooks'
 import { candleBucket } from '@/lib/terminal/candle-bucket.js'
 import TimeframePicker from './timeframe-picker'
 import { aggregate, timeframeMs, ema, bollinger, rsi, sessionVwap } from '@/lib/terminal/indicators'
-import { cvdSeriesUsd, sharedRsi1m, liveMid } from '@/lib/terminal/shared-metrics'
+import { cvdSeriesUsd, useSharedRsi1m, liveMid } from '@/lib/terminal/shared-metrics'
 import { levels as keyLevels } from '@/lib/terminal/analytics'
 import { metaFor, GREEN, RED, GRID, TEXT_DIM } from '@/lib/terminal/constants'
 import { fmtPrice, fmtCompact, fmtPct } from '@/lib/terminal/format'
@@ -403,7 +403,7 @@ export default function ChartPanel() {
   // The canonical 1m RSI every panel displays (shared-metrics) — shown in
   // the RSI pane header so the chart's stated current RSI is that number,
   // whatever timeframe the pane's line is drawn on.
-  const rsiCanon = usePoll(() => sharedRsi1m(), 500)
+  const rsiCanon = useSharedRsi1m()
   const flowTick = usePoll(() => getStream().trades.length, 500)
 
   // ---- key levels as price lines (POC / value area / 24h range)

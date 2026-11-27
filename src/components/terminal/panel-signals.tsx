@@ -7,12 +7,13 @@
  * checklist, plus every diagnostic reading behind it.
  */
 
+import { useRef } from 'react'
 import { useTerminal } from '@/lib/terminal/store'
 import { getStream } from '@/lib/terminal/stream-client'
 import { usePoll } from '@/lib/terminal/hooks'
 import { metaFor } from '@/lib/terminal/constants'
 import { signal, regime, flow, book, toxicity, levels, type Signal, type Regime, type Flow, type BookRead, type Tox, type Levels } from '@/lib/terminal/analytics'
-import { liveMid } from '@/lib/terminal/shared-metrics'
+import { liveMid, useSharedRsi1m, liveSpreadTicks } from '@/lib/terminal/shared-metrics'
 import { fmtPrice, fmtCompact, fmtSigned } from '@/lib/terminal/format'
 import { PanelHeader, SourceBadge, Meter, StatCard } from './panel-kit'
 import { cn } from '@/lib/utils'
@@ -24,6 +25,19 @@ export default function SignalsPanel() {
   const { symbol } = useTerminal()
   const meta = metaFor(symbol)
   const beat = usePoll(() => getStream().lastMsgAt, 1000)
+  // Displayed RSI-14 (1m): the shared fast poll (useSharedRsi1m), not
+  // regime()'s value sampled on this panel's 1 s beat — during fast moves
+  // the beat-sampled value lagged the other panels by seconds of action.
+  const rsiLive = useSharedRsi1m()
+  // Displayed spread: polled from the same bookTop the header/rail use
+  // (200 ms, like the header) and sanity-guarded by liveSpreadTicks —
+  // a crossed or implausibly wide pair shows the last sane value instead
+  // of a stale/glitched number (book()'s 1 s-beat sample once printed
+  // "196 ticks" while the live book was 1 tick wide).
+  const spreadPoll = usePoll(() => liveSpreadTicks(meta.tick), 200)
+  const lastSaneSpread = useRef<number | null>(null)
+  if (spreadPoll != null) lastSaneSpread.current = spreadPoll
+  const spreadShown = spreadPoll ?? lastSaneSpread.current
   const reads: Reads = {
     sig: signal(),
     r: regime(),
@@ -33,6 +47,7 @@ export default function SignalsPanel() {
     l: levels(),
   }
   const { sig, r, f, b, tox, l } = reads
+  const rsiShown = rsiLive ?? (r && isFinite(r.rsi1m) ? r.rsi1m : null)
   // Decision-level distances are measured against the LIVE mid (bookTicker
   // bookTop), not the last 1m candle close — the stale close is why the bp
   // distances disagreed with the live price.
@@ -131,7 +146,7 @@ export default function SignalsPanel() {
                   />
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2">
-                  <StatCard label="RSI-14 (1m)" value={r.rsi1m.toFixed(1)} tone={r.rsi1m >= 70 ? 'up' : r.rsi1m <= 30 ? 'down' : 'neutral'} sub={r.rsi1m >= 70 ? 'overbought stretch' : r.rsi1m <= 30 ? 'oversold stretch' : 'neutral band'} />
+                  <StatCard label="RSI-14 (1m)" value={rsiShown != null ? rsiShown.toFixed(1) : '—'} tone={rsiShown != null && rsiShown >= 70 ? 'up' : rsiShown != null && rsiShown <= 30 ? 'down' : 'neutral'} sub={rsiShown != null && rsiShown >= 70 ? 'overbought stretch' : rsiShown != null && rsiShown <= 30 ? 'oversold stretch' : 'neutral band'} />
                   <StatCard label="RSI · 15m" value={r.rsi15m.toFixed(1)} tone={r.rsi15m >= 70 ? 'up' : r.rsi15m <= 30 ? 'down' : 'neutral'} />
                   <StatCard label="ATR (1m)" value={`${r.atrPct.toFixed(3)}%`} sub={`${r.volPctile.toFixed(0)}th percentile · ${r.volLabel}`} />
                   <StatCard label="Price vs EMA50" value={fmtSigned(((mid - r.ema50_1m) / r.ema50_1m) * 100, 2) + '%'} tone={mid >= r.ema50_1m ? 'up' : 'down'} sub={`EMA21 ${fmtPrice(r.ema21_1m, meta.tick)}`} />
@@ -209,7 +224,7 @@ export default function SignalsPanel() {
                   />
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2">
-                  <StatCard label="Spread" value={`${b.spreadTicks} tick${b.spreadTicks === 1 ? '' : 's'}`} sub={fmtPrice(b.spreadTicks * meta.tick, meta.tick)} />
+                  <StatCard label="Spread" value={spreadShown != null ? `${spreadShown} tick${spreadShown === 1 ? '' : 's'}` : '—'} sub={spreadShown != null ? fmtPrice(spreadShown * meta.tick, meta.tick) : 'book syncing'} />
                   <StatCard label="Walls tracked" value={String(b.walls.length)} sub="levels ≥ adaptive threshold" />
                 </div>
               </>

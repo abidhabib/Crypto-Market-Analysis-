@@ -13,7 +13,7 @@ import { getStream } from '@/lib/terminal/stream-client'
 import { usePoll } from '@/lib/terminal/hooks'
 import { metaFor } from '@/lib/terminal/constants'
 import { insights, marketSummary, levels, regime, type Insight, type InsightCat } from '@/lib/terminal/analytics'
-import { liveMid, sharedRsi1m, RSI_BASIS } from '@/lib/terminal/shared-metrics'
+import { liveMid, useSharedRsi1m, RSI_BASIS } from '@/lib/terminal/shared-metrics'
 import { fmtPrice, fmtCompact, fmtTime } from '@/lib/terminal/format'
 import { PanelHeader, SourceBadge, StatCard } from './panel-kit'
 import { cn } from '@/lib/utils'
@@ -46,7 +46,10 @@ export default function InsightsPanel() {
   const summary = marketSummary()
   const l = levels()
   const r = regime()
-  const rsi1m = sharedRsi1m()
+  // Displayed RSI comes from the shared fast poll (useSharedRsi1m) — this
+  // panel's own render beat is 1.5 s, which left its RSI visibly behind
+  // the other panels during fast moves.
+  const rsi1m = useSharedRsi1m()
   const mid = liveMid() ?? r?.price ?? 0
   const filtered = cat === 'all' ? feed : feed.filter((i) => i.cat === cat)
 

@@ -15,8 +15,10 @@
  *    falling back to the 24h ticker close, then the last 1m close.
  */
 
+import { useMemo } from 'react'
 import { getStream, getCvdCumAt, getCvdLatest, getCvdPoints, getCvdCount, getCvdFirstT } from './stream-client'
 import { rsi as rsiSeries } from './indicators'
+import { usePoll } from './hooks'
 import type { Candle, Trade } from './types'
 
 export const RSI_PERIOD = 14
@@ -34,6 +36,37 @@ export function rsiFromCloses(closes: number[], period = RSI_PERIOD): number | n
 export function sharedRsi1m(): number | null {
   const klines = getStream().klines
   return rsiFromCloses(klines.map((c) => c.c))
+}
+
+/**
+ * Input signature for the canonical RSI: everything that can move it —
+ * the symbol, the candle count, the forming candle's start and CLOSE,
+ * and the newest trade (time + agg id). Panels poll this signature so
+ * they all re-read sharedRsi1m() the moment any input moves. (Round-2
+ * panels each sampled sharedRsi1m() on their own beat — 500 ms chart,
+ * 1 s sentiment/signals, 1.5 s insights — so during a fast move they
+ * printed values from different moments, up to ~5 points apart.)
+ */
+export function rsiInputSignature(): string {
+  const st = getStream()
+  const k = st.klines[st.klines.length - 1]
+  const lt = st.trades[st.trades.length - 1]
+  return `${st.symbol}|${st.klines.length}|${k?.t ?? 0}|${k?.c ?? 0}|${lt?.t ?? 0}|${st.lastTradeA}`
+}
+
+/** The one cadence every panel uses to display "RSI-14 (1m)". */
+export const RSI_POLL_MS = 500
+
+/**
+ * The displayed "RSI-14 (1m)" for every panel: sharedRsi1m() re-read on
+ * the uniform RSI_POLL_MS poll of rsiInputSignature(), so all panels
+ * track the same moving value within ~1 point at any instant.
+ */
+export function useSharedRsi1m(): number | null {
+  const sig = usePoll(rsiInputSignature, RSI_POLL_MS)
+  // sharedRsi1m() reads live stream state; the signature IS its input set.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  return useMemo(() => sharedRsi1m(), [sig])
 }
 
 /** Canonical RSI for an arbitrary candle series (e.g. aggregated 15m). */
@@ -124,4 +157,23 @@ export function liveMid(): number | null {
   const st = getStream()
   if (st.bookTop && st.bookTop.a > 0 && st.bookTop.b > 0) return (st.bookTop.b + st.bookTop.a) / 2
   return livePrice()
+}
+
+/**
+ * Sane live spread in ticks, from the ONE bookTop source (the bookTicker
+ * feed) that the header and the order-book rail display — never from a
+ * depth snapshot. Returns null when the pair is not displayable: book
+ * missing, crossed (ask < bid), or implausibly wide vs the last trade
+ * price (>0.5% of price) — a stale/glitched pair, not a real spread.
+ * Callers show their last sane value or '—' on null.
+ */
+export function liveSpreadTicks(tick: number): number | null {
+  const st = getStream()
+  const bt = st.bookTop
+  if (!bt || bt.b <= 0 || bt.a <= 0) return null
+  if (bt.a < bt.b) return null
+  const spread = bt.a - bt.b
+  const px = livePrice()
+  if (px && spread > px * 0.005) return null
+  return Math.max(1, Math.round(spread / tick))
 }

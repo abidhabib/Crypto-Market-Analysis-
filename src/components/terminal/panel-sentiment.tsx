@@ -5,7 +5,7 @@ import { useTerminal } from '@/lib/terminal/store'
 import { getStream } from '@/lib/terminal/stream-client'
 import { usePoll } from '@/lib/terminal/hooks'
 import { ema, atr, timeframeMs, aggregate } from '@/lib/terminal/indicators'
-import { sharedRsi1m } from '@/lib/terminal/shared-metrics'
+import { sharedRsi1m, useSharedRsi1m } from '@/lib/terminal/shared-metrics'
 import { fmtPct, fmtClock } from '@/lib/terminal/format'
 import { PanelHeader, Meter, StatCard, AsOf, toneColor } from './panel-kit'
 import { cn } from '@/lib/utils'
@@ -45,6 +45,10 @@ export default function SentimentPanel() {
   // a minute, so this panel's RSI lagged Signals' by up to 60s of price
   // action and the two panels printed different "current" RSI values.
   const kTick = usePoll(() => { const k = getStream().klines; const l = k[k.length - 1]; return l ? `${k.length}|${l.t}|${l.c}` : '0' }, 1000)
+  // The DISPLAYED RSI-14 (1m) reading reads the shared fast poll directly
+  // (useSharedRsi1m, 500 ms signature poll) — not this panel's 1 s memo —
+  // so it tracks the same moving value the other panels show.
+  const rsiLive = useSharedRsi1m()
   const computed = useMemo(() => {
     const klines = getStream().klines
     const h1 = aggregate(klines, timeframeMs('1h'))
@@ -125,8 +129,8 @@ export default function SentimentPanel() {
         weight: 1.2, crowd: true,
       })
     }
-    if (computed.rsiNow != null) {
-      const r = computed.rsiNow
+    if (rsiLive != null) {
+      const r = rsiLive
       out.push({
         key: 'rsi', label: 'RSI-14 (1m)', score: Math.min(100, Math.max(-100, (r - 50) * 3.3)),
         display: r.toFixed(1),
@@ -153,7 +157,7 @@ export default function SentimentPanel() {
       })
     }
     return out
-  }, [data, mark, computed])
+  }, [data, mark, computed, rsiLive])
 
   const consensus = useMemo(() => {
     let num = 0, den = 0
