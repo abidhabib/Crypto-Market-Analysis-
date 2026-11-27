@@ -14,31 +14,54 @@ import { cn } from '@/lib/utils'
  *
  * The panel always shows one of: loading, error (with retry), empty, or
  * the bubbles — never a silent black box. Rows are normalized through
- * bubbles-model (any payload shape, NaN-guarded sizes).
+ * bubbles-model (any payload shape, NaN-guarded sizes). A timed-out fetch
+ * is retried once automatically; a payload the route marks stale
+ * (x-market-stale) is rendered with a "stale" note, not as fresh data.
  */
 
 export default function CryptoBubblesPanel() {
   const [rows, setRows] = useState<BubbleRow[] | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  const [stale, setStale] = useState(false)
   const [asOf, setAsOf] = useState(0)
   const [loading, setLoading] = useState(true)
   const alive = useRef(true)
 
   const load = useCallback(async () => {
     setLoading(true)
-    try {
-      const res = await fetch('/api/market', { cache: 'no-store', signal: AbortSignal.timeout(15_000) })
+    const attempt = async () => {
+      const res = await fetch('/api/market', { cache: 'no-store', signal: AbortSignal.timeout(25_000) })
       const json: unknown = await res.json().catch(() => null)
-      if (!alive.current) return
       if (!res.ok) {
         const msg = (json as { error?: string } | null)?.error
         throw new Error(msg ?? `HTTP ${res.status}`)
       }
       const normalized = normalizeMarketRows(json)
       if (!normalized.length) throw new Error('market route returned no usable pairs')
-      setRows(normalized)
+      const asOfHdr = Number(res.headers.get('x-market-as-of'))
+      return {
+        rows: normalized,
+        stale: res.headers.get('x-market-stale') === '1',
+        asOf: isFinite(asOfHdr) && asOfHdr > 0 ? asOfHdr : Date.now(),
+      }
+    }
+    try {
+      let out: Awaited<ReturnType<typeof attempt>>
+      try {
+        out = await attempt()
+      } catch (e) {
+        // A slow route gets exactly one automatic retry after a short pause
+        // before the error state is shown; other failures surface at once.
+        if (!(e instanceof DOMException && (e.name === 'TimeoutError' || e.name === 'AbortError'))) throw e
+        await new Promise((r) => setTimeout(r, 1_500))
+        if (!alive.current) return
+        out = await attempt()
+      }
+      if (!alive.current) return
+      setRows(out.rows)
+      setStale(out.stale)
       setErr(null)
-      setAsOf(Date.now())
+      setAsOf(out.asOf)
     } catch (e) {
       if (!alive.current) return
       setErr(e instanceof Error ? e.message : 'market data unavailable')
@@ -81,6 +104,11 @@ export default function CryptoBubblesPanel() {
         {err && rows && (
           <div className="mb-2 rounded border border-[#f0b90b]/40 bg-[#f0b90b]/10 px-3 py-1.5 text-[11px] text-muted-foreground" role="alert">
             Refresh failed ({err}) — showing the last good snapshot.
+          </div>
+        )}
+        {stale && rows && (
+          <div className="mb-2 rounded border border-[#f0b90b]/40 bg-[#f0b90b]/10 px-3 py-1.5 text-[11px] text-muted-foreground" role="status">
+            Stale snapshot — live refresh is struggling; showing market data from {new Date(asOf).toISOString().slice(11, 19)} UTC.
           </div>
         )}
         {!rows && !err && (
