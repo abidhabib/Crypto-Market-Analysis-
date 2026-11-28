@@ -11,10 +11,13 @@ ARG NEXT_PUBLIC_STREAM_URL=https://stream.abidhabib.pro
 ENV NEXT_PUBLIC_STREAM_URL=$NEXT_PUBLIC_STREAM_URL
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV DATABASE_URL=file:/tmp/unused.db
+ENV SIGNALS_ENABLED=0
 RUN node --experimental-strip-types tests/heatmap-model.test.mjs \
  && node --experimental-strip-types tests/heatmap-navigation.test.mjs \
  && node --experimental-strip-types tests/stream-snapshot.test.mjs \
  && node tests/heatmap-orderflow.test.mjs \
+ && node --experimental-strip-types tests/signals.test.mjs \
+ && pnpm exec eslint src/lib/signals src/app/api/signals src/components/terminal/panel-signals.tsx src/instrumentation.ts scripts/signals-worker.ts scripts/signals-backtest.ts \
  && pnpm exec eslint src/components/terminal/panel-heatmap.tsx src/components/terminal/heatmap-orderflow-controls.tsx src/lib/terminal/heatmap-model.ts src/lib/terminal/heatmap-orderflow.ts src/lib/terminal/heatmap-columns-renderer.ts src/lib/terminal/heatmap-renderer.ts src/lib/terminal/use-heatmap-navigation.ts \
  && pnpm run build
 
@@ -24,10 +27,14 @@ LABEL org.opencontainers.image.source="https://github.com/abidhabib/Crypto-Marke
 LABEL org.opencontainers.image.revision=$APP_REVISION
 WORKDIR /app
 ENV NODE_ENV=production HOSTNAME=0.0.0.0 PORT=3000 NEXT_TELEMETRY_DISABLED=1
+ENV SIGNALS_ENABLED=1 SIGNALS_DATABASE_URL=file:/app/db/signals.db
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/* \
+ && mkdir -p /app/db && chown node:node /app/db
 COPY --from=build --chown=node:node /app/.next/standalone ./
 COPY --from=build --chown=node:node /app/.next/static ./.next/static
 COPY --from=build --chown=node:node /app/public ./public
 USER node
+VOLUME ["/app/db"]
 EXPOSE 3000
 CMD ["node", "server.js"]
 

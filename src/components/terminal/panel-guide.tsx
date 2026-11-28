@@ -11,7 +11,7 @@ const SOURCES = [
   { name: 'Fear & Greed', detail: 'alternative.me index', tone: 'live' as const },
   { name: 'Pulls / sweeps / icebergs / walls', detail: 'In-app level-lifecycle tracking on the local book with adaptive notional thresholds — spoof-style heuristics, not exchange-provided L3', tone: 'est' as const },
   { name: 'Liquidation map', detail: 'In-app estimate (volume distribution × leverage buckets) — not exchange data', tone: 'est' as const },
-  { name: 'Signals & insights', detail: 'Computed in-browser at ~1Hz from the live stream (trend, flow, VPIN-style toxicity, R/R checklist)', tone: 'est' as const },
+  { name: 'Signal desk', detail: 'Server-side Binance/Bybit spot scanner every 5 minutes; durable paper history. Live flow diagnostics and Insights remain browser-computed', tone: 'est' as const },
 ]
 
 const METHOD = [
@@ -24,7 +24,7 @@ const METHOD = [
   ['L3 events', 'Server-side state machine per (side, price): WALL ≥ adaptive threshold (scaled to the symbol’s median level size); PULL = ≥85% cancelled with no trade at that price; SWEEP = large print consuming a big level at/near best; ICEBERG = level refilled ≥3× after consumption.'],
   ['Liquidation map', 'Last 2h of 1m candles distributed over 10×/25×/50×/100× leverage buckets (45/30/15/10%). liq price ≈ entry × (1 ∓ 1/leverage). Magnitude-only estimate.'],
   ['Sentiment', 'Consensus = weighted average of readings. Crowd gauges (Fear&Greed, funding, retail long/short) are inverted (contrarian); flow gauges (taker balance, top-trader positioning, RSI, trend) are scored with the trend. Weights: F&G 1.2, funding 1.2, retail L/S 1.0, top-trader 1.0, trend 1.0, taker 0.8, RSI 0.8.'],
-  ['Signals (prediction)', 'Direction = 15m EMA structure + 30m CVD agreement. Strength = EMA spread + close-consistency. Checklist: strength ≥22, trade driver ≥55%, R/R after costs ≥1.10, target-cost ≤0.35%, volatility <92nd pctile, toxicity <90th pctile. ARMED only when every condition passes; otherwise WAIT with the blockers named. Buy-above / sell-below come from the nearest big walls (falls back to the 24h high/low).'],
+  ['Live flow diagnostics (Signals subview)', 'Direction = 15m EMA structure + 30m CVD agreement. Strength = EMA spread + close-consistency. Checklist: strength ≥22, trade driver ≥55%, R/R after costs ≥1.10, target-cost ≤0.35%, volatility <92nd pctile, toxicity <90th pctile. ARMED only when every condition passes; otherwise WAIT with the blockers named. Buy-above / sell-below come from the nearest big walls (falls back to the 24h high/low).'],
   ['Insights', 'A rolling feed built from live events: spoof pulls, sweeps, icebergs, new/vanished walls, whale prints ≥$100K, liquidations, CVD flips, buy bursts, book-skew extremes, funding spikes, RSI stretches and regime changes — deduplicated and tagged. The summary paragraph composes trend + flow + book + volatility + toxicity into one read.'],
   ['Chart', 'Candles with EMA20/50, Bollinger, session VWAP, volume, RSI(14) and a live CVD pane bucketed to the timeframe. Levels toggle pins POC, value-area edges and the 24h high/low onto the price axis. ATR(14) and the last-candle delta show in the legend.'],
 ]

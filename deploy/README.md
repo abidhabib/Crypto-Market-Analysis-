@@ -53,6 +53,28 @@ docker compose -p tradizone logs --tail=60 dashboard
 
 For a manual rollback, inspect `releases/<release-being-reverted>/previous-images.txt`, restore those image values in the managed Compose override, and run `docker compose -p tradizone up -d --no-deps dashboard` (include `stream` only if rolling it back too). Do not delete the previous images until the release is accepted.
 
+## Persistent signal history
+
+The dashboard image starts the spot signal worker and stores its SQLite ledger under `/app/db/signals.db`. That directory is declared as a volume so ordinary container recreation retains it; use an explicitly named volume in the existing **base** `compose.yaml` for predictable backups and recovery. Do not add this to the managed image-selection override, which releases replace.
+
+```yaml
+services:
+  dashboard:
+    environment:
+      SIGNALS_ENABLED: "1"
+      SIGNALS_EXCHANGE: auto
+      SIGNALS_DATABASE_URL: file:/app/db/signals.db
+      SIGNALS_PAPER_EQUITY: "10000"
+    volumes:
+      - signal-history:/app/db
+volumes:
+  signal-history:
+```
+
+The image creates a node-owned writable data directory and includes OpenSSL for Prisma's SQLite engine. Verify ownership if binding an existing host directory. Keep this volume during rollback and never use `docker compose down -v` if the ledger should survive. Copy existing records deliberately when changing from anonymous to named volumes. This change does not modify the remote base Compose file automatically.
+
+The worker requires a long-running Node process. Set `SIGNALS_ENABLED=0` on serverless/UI-only replicas; a standalone scheduler can run `scripts/signals-worker.ts` with the same database. Read `/api/signals` to check scan freshness, coverage and tracking errors; an HTTP 200 alone does not prove upstream data is healthy. See [signal methodology](../docs/signals.md).
+
 ## Local checks
 
 ```sh

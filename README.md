@@ -2,6 +2,20 @@
 
 A crypto market analysis terminal built with Next.js, React, TypeScript and Canvas. It includes a live liquidity heatmap with grouped trade bubbles, charts, footprint, volume profile, whale activity, futures data, options gamma and market context.
 
+## Spot signals and paper history
+
+The **Signals** tab includes a background Binance/Bybit spot scanner, closed-candle 4H/1H/15M/5M confirmation, transparent scoring and mandatory vetoes, ATR stops, cost-adjusted targets, and persistent paper trade tracking. Daily, weekly and monthly history distinguishes wins, losses, open/pending trades and expiry. Live order-flow diagnostics remain available as a subview.
+
+The worker starts with the persistent Next server. Its dedicated SQLite database defaults to `db/signals.db`; production must retain that file across releases. No trading credentials or real orders are involved. Heatmap coverage requires a provider adapter; unavailable coverage is shown explicitly. See [rules, configuration, accounting and historical validation](docs/signals.md).
+
+```sh
+pnpm test:signals
+# Optional standalone scan cycle, loading local settings:
+node --env-file=.env --experimental-strip-types scripts/signals-worker.ts
+# Separate 6-month technical baseline; no claim of full-strategy verification:
+node --env-file=.env --experimental-strip-types scripts/signals-backtest.ts --symbol BTCUSDT --days 180 --out /tmp/btc-180d.json
+```
+
 ## Run locally
 
 Requires Node.js 22.12+ (or Bun) and pnpm 9.15.4. Public market data connections require access to Binance and the other configured upstream sources.

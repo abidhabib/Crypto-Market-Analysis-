@@ -72,7 +72,7 @@ export const TABS = [
   { id: 'l3', label: 'L3 events', key: '8', hint: 'Liquidity events (L3-style) (key 8)' },
   { id: 'futures', label: 'Futures', key: '9', hint: 'Futures — funding, open interest, liquidation map (key 9)' },
   { id: 'sentiment', label: 'Sentiment', key: '0', hint: 'Sentiment — every reading as a meter, and their consensus (key 0)' },
-  { id: 'signals', label: 'Signals', key: 's', hint: 'Market prediction — trend, strength, R/R checklist, toxicity (key S)' },
+  { id: 'signals', label: 'Signals', key: 's', hint: 'Spot scanner, signal history and paper performance (key S)' },
   { id: 'insights', label: 'Insights', key: 'i', hint: 'Market insights — auto-generated analysis feed & key levels (key I)' },
   { id: 'guide', label: 'Guide', key: 'g', hint: 'Shortcuts & methodology' },
 ] as const
