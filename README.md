@@ -4,6 +4,8 @@ A crypto market analysis terminal built with Next.js, React, TypeScript and Canv
 
 ## Spot signals and paper history
 
+The **Signals → Spot & futures forecasts** view records hourly UP/DOWN/NEUTRAL predictions for the top 20 eligible markets per market type and evaluates their four-hour outcomes. Spot exposes BUY / SELL-AVOID bias; USDT perpetual futures expose LONG / SHORT bias. Direction accuracy, neutral outcomes and independent paper trade performance are tracked separately. Forecasts use the appropriate spot or futures prices, have immutable issue-time evidence, and do not place real orders. See [forecast rules, accounting and limitations](docs/forecasts.md). Run `pnpm test:forecasts` to verify the forecast engine, or `pnpm forecasts:scan` for one worker cycle.
+
 The **Signals** tab includes a background Binance/Bybit spot scanner, closed-candle 4H/1H/15M/5M confirmation, transparent scoring and mandatory vetoes, ATR stops, cost-adjusted targets, and persistent paper trade tracking. Daily, weekly and monthly history distinguishes wins, losses, open/pending trades and expiry. Live order-flow diagnostics remain available as a subview.
 
 The worker starts with the persistent Next server. Its dedicated SQLite database defaults to `db/signals.db`; production must retain that file across releases. No trading credentials or real orders are involved. Heatmap coverage requires a provider adapter; unavailable coverage is shown explicitly. See [rules, configuration, accounting and historical validation](docs/signals.md).

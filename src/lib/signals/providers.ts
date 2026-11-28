@@ -58,54 +58,68 @@ export async function publicJson<T>(origin: string, path: string, params: Record
 
 export interface MarketProvider {
   exchange: Exchange
+  marketType: 'spot' | 'futures'
   markets(): Promise<Market[]>
   bars(symbol: string, tf: Timeframe, start?: number, end?: number): Promise<Bar[]>
   book(symbol: string): Promise<Book>
   derivatives(symbol: string): Promise<Derivatives>
+  fundingHistory(symbol: string, start: number, end: number): Promise<{ at: number; rate: number; mark: number | null }[]>
 }
 
-export function provider(exchange: Exchange): MarketProvider {
+export function provider(exchange: Exchange, marketType: 'spot' | 'futures' = 'spot'): MarketProvider {
+  const futures = marketType === 'futures', origin = futures ? FUTURES : BINANCE
+  const prefix = futures ? '/fapi/v1' : '/api/v3', category = futures ? 'linear' : 'spot'
   return {
-    exchange,
+    exchange, marketType,
     async markets() {
       if (exchange === 'binance') {
         const [info, tickers] = await Promise.all([
-          cached('binance:instruments', Date.now() + 3_600_000, () => publicJson<{ symbols: Row[] }>(BINANCE, '/api/v3/exchangeInfo')),
-          publicJson<Row[]>(BINANCE, '/api/v3/ticker/24hr'),
+          cached(`binance:${marketType}:instruments`, Date.now() + 3_600_000, () => publicJson<{ symbols: Row[] }>(origin, `${prefix}/exchangeInfo`)),
+          publicJson<Row[]>(origin, `${prefix}/ticker/24hr`),
         ])
         const map = new Map(tickers.map(t => [t.symbol, t]))
-        return info.symbols.filter(s => s.status === 'TRADING' && s.quoteAsset === 'USDT' && s.isSpotTradingAllowed !== false).flatMap(s => {
+        return info.symbols.filter(s => s.status === 'TRADING' && s.quoteAsset === 'USDT' && (futures ? s.contractType === 'PERPETUAL' && s.marginAsset === 'USDT' : s.isSpotTradingAllowed !== false)).flatMap(s => {
           const t = map.get(s.symbol)
           if (!t) return []
           const filters = s.filters as Row[]
           return [{ symbol: String(s.symbol), base: String(s.baseAsset), price: number(t.lastPrice), turnover: number(t.quoteVolume), change: number(t.priceChangePercent) / 100,
             tick: number(filters.find(f => f.filterType === 'PRICE_FILTER')?.tickSize), step: number(filters.find(f => f.filterType === 'LOT_SIZE')?.stepSize),
-            minNotional: number(filters.find(f => f.filterType === 'NOTIONAL' || f.filterType === 'MIN_NOTIONAL')?.minNotional) }]
+            minNotional: number(filters.find(f => f.filterType === 'NOTIONAL' || f.filterType === 'MIN_NOTIONAL')?.[futures ? 'notional' : 'minNotional']) }]
         })
       }
       const [info, tickers] = await Promise.all([
-        cached('bybit:instruments', Date.now() + 3_600_000, () => publicJson<Envelope>(BYBIT, '/v5/market/instruments-info', { category: 'spot' })),
-        publicJson<Envelope>(BYBIT, '/v5/market/tickers', { category: 'spot' }),
+        cached(`bybit:${marketType}:instruments`, Date.now() + 3_600_000, async () => {
+          const list: Row[] = [], seen = new Set<string>(); let cursor = ''
+          do {
+            const page = await publicJson<Envelope>(BYBIT, '/v5/market/instruments-info', { category, ...(futures ? { limit: 1000, cursor } : {}) })
+            list.push(...page.result.list)
+            cursor = futures ? String(page.result.nextPageCursor ?? '') : ''
+            if (cursor && seen.has(cursor)) throw new Error('Repeated instrument cursor')
+            seen.add(cursor)
+          } while (cursor)
+          return { result: { list } }
+        }),
+        publicJson<Envelope>(BYBIT, '/v5/market/tickers', { category }),
       ])
       const map = new Map(tickers.result.list.map(t => [t.symbol, t]))
-      return info.result.list.filter(s => s.status === 'Trading' && s.quoteCoin === 'USDT' && String(s.innovation ?? '0') !== '1').flatMap(s => {
+      return info.result.list.filter(s => s.status === 'Trading' && s.quoteCoin === 'USDT' && (futures ? s.contractType === 'LinearPerpetual' && s.settleCoin === 'USDT' && !s.isPreListing : String(s.innovation ?? '0') !== '1')).flatMap(s => {
         const t = map.get(s.symbol), lot = s.lotSizeFilter as Row, price = s.priceFilter as Row
         if (!t) return []
         return [{ symbol: String(s.symbol), base: String(s.baseCoin), price: number(t.lastPrice), turnover: number(t.turnover24h), change: number(t.price24hPcnt),
-          tick: number(price.tickSize), step: number(lot.basePrecision), minNotional: number(lot.minOrderAmt) }]
+          tick: number(price.tickSize), step: number(futures ? lot.qtyStep : lot.basePrecision), minNotional: number(futures ? lot.minNotionalValue : lot.minOrderAmt) }]
       })
     },
     async bars(symbol, tf, start, end) {
       if (!/^[A-Z0-9]{2,30}USDT$/.test(symbol)) throw new Error('Invalid USDT symbol')
       const interval = INTERVAL_MS[tf], historical = start != null || end != null
-      const key = `${exchange}:${symbol}:${tf}:${start ?? ''}:${end ?? Math.floor(Date.now() / interval)}`
+      const key = `${exchange}:${marketType}:${symbol}:${tf}:${start ?? ''}:${end ?? Math.floor(Date.now() / interval)}`
       return cached(key, historical ? Date.now() + 30_000 : (Math.floor(Date.now() / interval) + 1) * interval + 2000, async () => {
         if (exchange === 'binance') {
-          const rows = await publicJson<unknown[][]>(BINANCE, '/api/v3/klines', { symbol, interval: tf, limit: historical ? 1000 : 260,
+          const rows = await publicJson<unknown[][]>(origin, `${prefix}/klines`, { symbol, interval: tf, limit: historical ? 1000 : 260,
             ...(start != null ? { startTime: start } : {}), ...(end != null ? { endTime: end } : {}) })
           return rows.map(r => ({ t: number(r[0]), o: number(r[1]), h: number(r[2]), l: number(r[3]), c: number(r[4]), v: number(r[5]), quote: number(r[7]), buy: number(r[9]) }))
         }
-        const rows = await publicJson<{ retCode: number; result: { list: string[][] } }>(BYBIT, '/v5/market/kline', { category: 'spot', symbol, interval: interval / 60_000, limit: historical ? 1000 : 260,
+        const rows = await publicJson<{ retCode: number; result: { list: string[][] } }>(BYBIT, '/v5/market/kline', { category, symbol, interval: interval / 60_000, limit: historical ? 1000 : 260,
           ...(start != null ? { start } : {}), ...(end != null ? { end } : {}) })
         return rows.result.list.map(r => ({ t: +r[0], o: +r[1], h: +r[2], l: +r[3], c: +r[4], v: +r[5], quote: +r[6] })).sort((a, b) => a.t - b.t)
       })
@@ -113,16 +127,26 @@ export function provider(exchange: Exchange): MarketProvider {
     async book(symbol) {
       let bids: string[][], asks: string[][], at: number
       if (exchange === 'binance') {
-        const r = await publicJson<{ bids: string[][]; asks: string[][] }>(BINANCE, '/api/v3/depth', { symbol, limit: 100 })
+        const r = await publicJson<{ bids: string[][]; asks: string[][] }>(origin, `${prefix}/depth`, { symbol, limit: 100 })
         bids = r.bids; asks = r.asks; at = Date.now()
       } else {
-        const r = await publicJson<{ retCode: number; result: { b: string[][]; a: string[][]; ts: number } }>(BYBIT, '/v5/market/orderbook', { category: 'spot', symbol, limit: 100 })
+        const r = await publicJson<{ retCode: number; result: { b: string[][]; a: string[][]; ts: number } }>(BYBIT, '/v5/market/orderbook', { category, symbol, limit: 100 })
         bids = r.result.b; asks = r.result.a; at = r.result.ts
       }
       if (!bids.length || !asks.length) throw new Error('Empty order book')
       const bid = +bids[0][0], ask = +asks[0][0], mid = (bid + ask) / 2
       return { at, bid, ask, bidUsd: bids.filter(r => +r[0] >= mid * 0.995).reduce((s, r) => s + +r[0] * +r[1], 0),
         askUsd: asks.filter(r => +r[0] <= mid * 1.005).reduce((s, r) => s + +r[0] * +r[1], 0) }
+    },
+    async fundingHistory(symbol, start, end) {
+      if (!futures) return []
+      const rows = exchange === 'binance'
+        ? await publicJson<Row[]>(FUTURES, '/fapi/v1/fundingRate', { symbol, startTime: start, endTime: end, limit: 1000 })
+        : (await publicJson<Envelope>(BYBIT, '/v5/market/funding/history', { category, symbol, startTime: start, endTime: end, limit: 200 })).result.list
+      if (rows.length >= (exchange === 'binance' ? 1000 : 200)) throw new Error('Funding history truncated')
+      const result = rows.map(r => ({ at: number(r.fundingTime ?? r.fundingRateTimestamp), rate: number(r.fundingRate), mark: r.markPrice == null ? null : number(r.markPrice) }))
+      if (result.some(r => !Number.isFinite(r.at) || !Number.isFinite(r.rate) || r.mark != null && (!Number.isFinite(r.mark) || r.mark <= 0))) throw new Error('Invalid funding history')
+      return result.filter(r => r.at >= start && r.at <= end).sort((a, b) => a.at - b.at)
     },
     async derivatives(symbol) {
       if (exchange === 'binance') {

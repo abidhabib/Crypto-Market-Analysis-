@@ -12,6 +12,8 @@
     "db:migrate": "prisma migrate dev",
     "db:reset": "prisma migrate reset",
     "test:signals": "node --experimental-strip-types tests/signals.test.mjs",
+    "test:forecasts": "node --experimental-strip-types --test tests/forecasts*.test.mjs",
+    "forecasts:scan": "node --experimental-strip-types scripts/forecasts-worker.ts",
     "signals:scan": "node --experimental-strip-types scripts/signals-worker.ts",
     "signals:backtest": "node --experimental-strip-types scripts/signals-backtest.ts"
   },

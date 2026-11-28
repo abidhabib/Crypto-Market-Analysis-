@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import type { ScanReport, SignalRecord } from './types.ts'
 import type { BacktestSummary } from './backtest.ts'
+import type { Forecast, ForecastBucket, ForecastScan, MarketType } from '../forecasts/types.ts'
 
 /** Isolated SQLite tables; never runs db push or modifies the app's User/Post tables. */
 export class SignalRepository {
@@ -27,17 +28,22 @@ export class SignalRepository {
       await this.client.$executeRawUnsafe('CREATE TABLE IF NOT EXISTS SignalScan (id TEXT PRIMARY KEY, startedAt REAL NOT NULL, payload TEXT NOT NULL)')
       await this.client.$executeRawUnsafe('CREATE TABLE IF NOT EXISTS SignalLease (id TEXT PRIMARY KEY, owner TEXT NOT NULL, expiresAt REAL NOT NULL)')
       await this.client.$executeRawUnsafe('CREATE TABLE IF NOT EXISTS SignalBacktest (id TEXT PRIMARY KEY, generatedAt REAL NOT NULL, payload TEXT NOT NULL)')
+      await this.client.$executeRawUnsafe('CREATE TABLE IF NOT EXISTS MarketForecast (id TEXT PRIMARY KEY, marketType TEXT NOT NULL, symbol TEXT NOT NULL, slot REAL NOT NULL, issuedAt REAL NOT NULL, pending INTEGER NOT NULL, payload TEXT NOT NULL)')
+      await this.client.$executeRawUnsafe('CREATE INDEX IF NOT EXISTS forecast_history ON MarketForecast(marketType, issuedAt DESC)')
+      await this.client.$executeRawUnsafe('CREATE INDEX IF NOT EXISTS forecast_latest ON MarketForecast(marketType, slot DESC)')
+      await this.client.$executeRawUnsafe('CREATE INDEX IF NOT EXISTS forecast_pending ON MarketForecast(pending)')
+      await this.client.$executeRawUnsafe('CREATE TABLE IF NOT EXISTS ForecastScan (marketType TEXT PRIMARY KEY, payload TEXT NOT NULL)')
     })().catch(e => { this.ready = null; throw e })
     return this.ready
   }
-  async acquire(owner: string, now: number): Promise<boolean> {
+  async acquire(owner: string, now: number, name = 'scanner'): Promise<boolean> {
     await this.init()
-    const changed = await this.client.$executeRawUnsafe(`INSERT INTO SignalLease (id, owner, expiresAt) VALUES ('scanner', ?, ?)
-      ON CONFLICT(id) DO UPDATE SET owner = excluded.owner, expiresAt = excluded.expiresAt WHERE SignalLease.expiresAt < ? OR SignalLease.owner = ?`, owner, now + 120_000, now, owner)
+    const changed = await this.client.$executeRawUnsafe(`INSERT INTO SignalLease (id, owner, expiresAt) VALUES (?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET owner = excluded.owner, expiresAt = excluded.expiresAt WHERE SignalLease.expiresAt < ? OR SignalLease.owner = ?`, name, owner, now + 120_000, now, owner)
     return changed === 1
   }
-  async release(owner: string) {
-    await this.client.$executeRawUnsafe("DELETE FROM SignalLease WHERE id = 'scanner' AND owner = ?", owner)
+  async release(owner: string, name = 'scanner') {
+    await this.client.$executeRawUnsafe('DELETE FROM SignalLease WHERE id = ? AND owner = ?', name, owner)
   }
   async insert(record: SignalRecord): Promise<boolean> {
     await this.init()
@@ -84,6 +90,63 @@ export class SignalRepository {
     await this.init()
     const rows = await this.client.$queryRawUnsafe<{ payload: string }[]>('SELECT payload FROM SignalBacktest ORDER BY generatedAt DESC LIMIT 20')
     return rows.map(r => JSON.parse(r.payload))
+  }
+  async insertForecast(record: Forecast): Promise<boolean> {
+    await this.init()
+    return (await this.client.$executeRawUnsafe('INSERT OR IGNORE INTO MarketForecast (id, marketType, symbol, slot, issuedAt, pending, payload) VALUES (?, ?, ?, ?, ?, 1, ?)',
+      record.id, record.marketType, record.symbol, record.slot, record.issuedAt, JSON.stringify(record))) === 1
+  }
+  async saveForecast(record: Forecast) {
+    await this.init()
+    const pending = record.tracking.settledAt == null || record.tracking.trade.beforeFundingPct != null && record.tracking.trade.netPct == null
+    // Prediction, source, plan and issue-time evidence cannot be rewritten by the tracker.
+    await this.client.$executeRawUnsafe("UPDATE MarketForecast SET pending = ?, payload = json_set(payload, '$.tracking', json(?)) WHERE id = ?",
+      pending ? 1 : 0, JSON.stringify(record.tracking), record.id)
+  }
+  async pendingForecasts(): Promise<Forecast[]> {
+    await this.init()
+    const rows = await this.client.$queryRawUnsafe<{ payload: string }[]>('SELECT payload FROM MarketForecast WHERE pending = 1 ORDER BY issuedAt')
+    return rows.map(r => JSON.parse(r.payload))
+  }
+  async forecasts(marketType: MarketType, since: number): Promise<Forecast[]> {
+    await this.init()
+    const rows = await this.client.$queryRawUnsafe<{ payload: string }[]>('SELECT payload FROM MarketForecast WHERE marketType = ? AND issuedAt >= ? ORDER BY issuedAt DESC, id', marketType, since)
+    return rows.map(r => JSON.parse(r.payload))
+  }
+  async forecastPage(marketType: MarketType, since: number, page: number): Promise<Forecast[]> {
+    await this.init()
+    const rows = await this.client.$queryRawUnsafe<{ payload: string }[]>('SELECT payload FROM MarketForecast WHERE marketType = ? AND issuedAt >= ? ORDER BY issuedAt DESC, id LIMIT 25 OFFSET ?', marketType, since, page * 25)
+    return rows.map(r => JSON.parse(r.payload))
+  }
+  async latestForecasts(marketType: MarketType): Promise<Forecast[]> {
+    await this.init()
+    const rows = await this.client.$queryRawUnsafe<{ payload: string }[]>('SELECT payload FROM MarketForecast WHERE marketType = ? AND slot = (SELECT MAX(slot) FROM MarketForecast WHERE marketType = ?) ORDER BY symbol', marketType, marketType)
+    return rows.map(r => JSON.parse(r.payload))
+  }
+  async forecastBuckets(marketType: MarketType, since: number): Promise<ForecastBucket[]> {
+    await this.init()
+    // Aggregate in SQLite instead of transferring a year of evidence payloads on every poll.
+    const rows = await this.client.$queryRawUnsafe<ForecastBucket[]>(`SELECT
+      strftime('%Y-%m-%d', issuedAt / 1000, 'unixepoch') AS day,
+      json_extract(payload, '$.direction') AS direction,
+      json_extract(payload, '$.tracking.actual') AS actual,
+      COUNT(*) AS total,
+      SUM(json_extract(payload, '$.tracking.error') IS NOT NULL) AS delayed,
+      SUM(json_extract(payload, '$.tracking.trade.netPct') IS NOT NULL) AS trades,
+      SUM(COALESCE(json_extract(payload, '$.tracking.trade.netPct'), 0) > 0) AS wins,
+      SUM(COALESCE(json_extract(payload, '$.tracking.trade.netPct'), 0)) AS netSum,
+      SUM(json_extract(payload, '$.tracking.trade.beforeFundingPct') IS NOT NULL AND json_extract(payload, '$.tracking.trade.netPct') IS NULL) AS pendingFunding
+      FROM MarketForecast WHERE marketType = ? AND issuedAt >= ? GROUP BY day, direction, actual ORDER BY day DESC`, marketType, since)
+    return rows.map(r => ({ ...r, total: Number(r.total), delayed: Number(r.delayed), trades: Number(r.trades), wins: Number(r.wins), netSum: Number(r.netSum), pendingFunding: Number(r.pendingFunding) }))
+  }
+  async saveForecastScan(scan: ForecastScan) {
+    await this.init()
+    await this.client.$executeRawUnsafe('INSERT INTO ForecastScan (marketType, payload) VALUES (?, ?) ON CONFLICT(marketType) DO UPDATE SET payload = excluded.payload', scan.marketType, JSON.stringify(scan))
+  }
+  async forecastScan(marketType: MarketType): Promise<ForecastScan | null> {
+    await this.init()
+    const rows = await this.client.$queryRawUnsafe<{ payload: string }[]>('SELECT payload FROM ForecastScan WHERE marketType = ?', marketType)
+    return rows.length ? JSON.parse(rows[0].payload) : null
   }
   async close() { await this.client.$disconnect() }
 }

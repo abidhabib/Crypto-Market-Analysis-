@@ -7,6 +7,7 @@ import type { Analysis, Performance, SignalDashboard, SignalRecord } from '@/lib
 import { cn } from '@/lib/utils'
 
 const FlowPanel = dynamic(() => import('./panel-signal-flow'), { ssr: false })
+const ForecastsPanel = dynamic(() => import('./panel-forecasts'), { loading: () => <p role="status" className="p-4 text-sm">Loading forecasts…</p> })
 const num = (n: number | null | undefined, digits = 2) => n == null || !Number.isFinite(n) ? '—' : n.toLocaleString('en-US', { maximumFractionDigits: digits })
 const price = (n: number | null | undefined) => num(n, n != null && n < 1 ? 8 : 4)
 const date = (n: number | null | undefined) => n ? new Date(n).toISOString().replace('T', ' ').slice(0, 19) + ' UTC' : '—'
@@ -65,10 +66,11 @@ function PerformanceCards({ stats: s }: { stats: Performance }) {
 }
 
 export default function SignalsPanel() {
-  const [view, setView] = useState<'scanner' | 'history' | 'method' | 'flow'>('scanner')
+  const [view, setView] = useState<'forecasts' | 'scanner' | 'history' | 'method' | 'flow'>('forecasts')
   const [data, setData] = useState<SignalDashboard | null>(null), [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false), [days, setDays] = useState(30), [group, setGroup] = useState('day'), [page, setPage] = useState(0), [refresh, setRefresh] = useState(0)
   useEffect(() => {
+    if (view === 'forecasts') return
     let active = true, busy = false
     const ctrl = new AbortController()
     const load = async () => {
@@ -87,15 +89,15 @@ export default function SignalsPanel() {
     const visible = () => { if (!document.hidden) void load() }
     document.addEventListener('visibilitychange', visible)
     return () => { active = false; ctrl.abort(); clearInterval(timer); document.removeEventListener('visibilitychange', visible) }
-  }, [days, group, page, refresh])
+  }, [days, group, page, refresh, view])
   const scan = data?.lastScan
   const stale = !!scan && data != null && data.serverAt - (scan.finishedAt ?? scan.startedAt) > 600_000
   const state = !data ? 'CONNECTING' : !data.enabled ? 'SCANNER DISABLED' : stale ? 'STALE DATA' : scan?.status === 'error' ? 'DATA UNAVAILABLE' : scan?.status === 'partial' ? 'PARTIAL COVERAGE' : scan?.status === 'running' ? 'SCANNING' : !scan ? 'STARTING' : data.active.length ? 'TRACKING SIGNALS' : 'NO SIGNAL'
 
   return <div className="flex h-full min-h-0 flex-col overflow-y-auto" data-testid="panel-signals">
-    <header className="flex flex-wrap items-center gap-3 border-b border-border/60 p-4"><ShieldCheck className="size-5 text-amber-300" aria-hidden="true" /><div><h2 className="text-lg font-semibold">Spot signal desk</h2><p className="text-sm text-muted-foreground">4H setups · multi-timeframe confirmation · recorded paper outcomes</p></div><button className={cn(control, 'ml-auto inline-flex items-center gap-2')} onClick={() => setRefresh(v => v + 1)} disabled={loading}><RefreshCw className={cn('size-4', loading && 'animate-spin motion-reduce:animate-none')} aria-hidden="true" />Refresh</button></header>
-    <nav aria-label="Signal views" className="flex flex-wrap gap-2 border-b border-border/60 px-4 py-3">{(['scanner', 'history', 'method', 'flow'] as const).map(tab => <button key={tab} onClick={() => setView(tab)} aria-pressed={view === tab} className={cn(control, view === tab && 'border-amber-400/50 bg-amber-400/10 text-amber-300')}>{({ scanner: 'Scanner & active', history: 'History & performance', method: 'Method & validation', flow: 'Live flow diagnostics' })[tab]}</button>)}</nav>
-    {view === 'flow' ? <FlowPanel /> : <div className="space-y-4 p-4">
+    <header className="flex flex-wrap items-center gap-3 border-b border-border/60 p-4"><ShieldCheck className="size-5 text-amber-300" aria-hidden="true" /><div><h2 className="text-lg font-semibold">Signal & forecast desk</h2><p className="text-sm text-muted-foreground">Spot & futures forecasts · measured accuracy · paper outcomes</p></div>{view !== 'forecasts' && <button className={cn(control, 'ml-auto inline-flex items-center gap-2')} onClick={() => setRefresh(v => v + 1)} disabled={loading}><RefreshCw className={cn('size-4', loading && 'animate-spin motion-reduce:animate-none')} aria-hidden="true" />Refresh</button>}</header>
+    <nav aria-label="Signal views" className="flex flex-wrap gap-2 border-b border-border/60 px-4 py-3">{(['forecasts', 'scanner', 'history', 'method', 'flow'] as const).map(tab => <button key={tab} onClick={() => setView(tab)} aria-pressed={view === tab} className={cn(control, view === tab && 'border-amber-400/50 bg-amber-400/10 text-amber-300')}>{({ forecasts: 'Spot & futures forecasts', scanner: 'Spot scanner & active', history: 'History & performance', method: 'Method & validation', flow: 'Live flow diagnostics' })[tab]}</button>)}</nav>
+    {view === 'forecasts' ? <ForecastsPanel /> : view === 'flow' ? <FlowPanel /> : <div className="space-y-4 p-4">
       {error && <div role="alert" className="rounded-md border border-rose-400/40 bg-rose-400/10 p-3 text-sm text-rose-300">{error} {data ? 'Previously loaded records are shown; freshness is unverified.' : ''}</div>}
       {!data && !error && <p role="status" className="p-8 text-center text-muted-foreground">Loading scanner and saved history…</p>}
       {data && <>

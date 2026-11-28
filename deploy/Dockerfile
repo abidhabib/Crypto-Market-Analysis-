@@ -17,6 +17,8 @@ RUN node --experimental-strip-types tests/heatmap-model.test.mjs \
  && node --experimental-strip-types tests/stream-snapshot.test.mjs \
  && node tests/heatmap-orderflow.test.mjs \
  && node --experimental-strip-types tests/signals.test.mjs \
+ && node --experimental-strip-types --test tests/forecasts*.test.mjs \
+ && pnpm exec eslint src/lib/forecasts src/app/api/forecasts src/components/terminal/panel-forecasts.tsx scripts/forecasts-worker.ts \
  && pnpm exec eslint src/lib/signals src/app/api/signals src/components/terminal/panel-signals.tsx src/instrumentation.ts scripts/signals-worker.ts scripts/signals-backtest.ts \
  && pnpm exec eslint src/components/terminal/panel-heatmap.tsx src/components/terminal/heatmap-orderflow-controls.tsx src/lib/terminal/heatmap-model.ts src/lib/terminal/heatmap-orderflow.ts src/lib/terminal/heatmap-columns-renderer.ts src/lib/terminal/heatmap-renderer.ts src/lib/terminal/use-heatmap-navigation.ts \
  && pnpm run build

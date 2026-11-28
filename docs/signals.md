@@ -1,4 +1,5 @@
 # Spot signal desk
+# Spot signal desk
 
 The Signals tab runs a server-side spot scanner and a durable forward paper ledger. Existing selected-market order-flow calculations remain available under **Live flow diagnostics**. No order-placement endpoint or trading credential is used.
 
